@@ -1,133 +1,109 @@
-# ES-synth-starter
+# ES Monosynth Pro
 
-STM32-based music synthesizer with real-time key scanning, audio generation, and FreeRTOS multitasking.
+This project transforms a basic STM32L432KC + FreeRTOS synthesizer skeleton into a feature-rich, dual-oscillator subtractive Monosynth. The architecture is modularized into discrete embedded subsystems (Hardware, DSP, UI) to provide professional-grade sound and stability.
 
-## Features Implemented
+## Features
 
-### Core Functionality
-- **12-Key Musical Keyboard**: Scans key matrix (rows 0-2) to detect key presses
-- **Sawtooth Wave Generation**: 22kHz sample rate using hardware timer (TIM1) interrupt
-- **Real-time Audio Output**: Phase accumulator with 32-bit precision for accurate frequency generation
-- **Equal Temperament Tuning**: Based on 440Hz reference for note A
+Inspired by classic analog and digital synthesizers like the Moog Ladder, Korg MS-20, Roland SH-101, and ARP Odyssey, the DSP engine features:
 
-### Threading & Synchronization (FreeRTOS)
-- **scanKeysTask**: Scans key matrix every 20ms, handles knob decoding, updates note frequency
-  - Priority: 2 (higher)
-  - Stack: 128 words (512 bytes)
-- **displayUpdateTask**: Updates OLED display every 100ms, shows current note and volume
-  - Priority: 1 (lower)
-  - Stack: 128 words (512 bytes)
-- **Mutex Protection**: `sysState.mutex` protects shared data between threads
-- **Atomic Operations**: ISR-safe access to `currentStepSize` and `knobRotation`
+### 1. Sound Generation (Oscillators & Noise)
+*   **Dual Primary VCOs**:
+    *   **OSC 1**: Features continuous **Waveform Morphing** (Sawtooth → Square → Triangle → Sine).
+    *   **OSC 2**: Standard waveforms with adjustable **Detune** (-50 to +50 cents), **Octave Shift** (-2 to +2), and **Hard Sync** (OSC 1 phase resets OSC 2).
+*   **Sub-Oscillator (SH-101 Style)**: A dedicated square wave that is permanently pitched exactly one octave below OSC 1. Adds massive bottom-end bass without tying up OSC 2.
+*   **Noise Generator (White/Pink)**: Powered by a highly efficient 32-bit Linear Feedback Shift Register (LFSR). Essential for synthesizing percussive hits, wind, and lo-fi textures.
+*   **Ring Modulation (AM)**: Multiplies the output of OSC 1 and OSC 2 to create complex, inharmonic, and bell-like metallic tones.
 
-### Knob Control System
-- **Knob 3 Decoding**: Quadrature encoder state machine
-  - Sampled from row 3, columns 0-1
-  - Handles normal and "impossible" transitions
-  - Remembers last direction for missed states
-- **Volume Control**: 0-8 range with logarithmic taper
-  - Implemented in `sampleISR()` using right-shift: `Vout >> (8 - rotation)`
-  - Atomic access for ISR safety
-  - Display shows current volume level
+### 2. Sound Shaping (Filters, Drive, & Wavefolding)
+*   **Three Distinct Filter Models**:
+    *   **Standard SVF**: A clean, digital State-Variable Filter.
+    *   **Moog Ladder Approximation (4-Pole LP)**: Features warm, non-linear feedback and soft clipping at the filter input for that signature classic "Moog" character.
+    *   **MS-20 Sallen-Key Approximation**: Aggressive, screaming resonance with asymmetric clipping in the feedback path, perfect for acid basslines and gritty leads.
+*   **Filter Types**: Selectable Low-Pass (LP), High-Pass (HP), Band-Pass (BP), and Notch.
+*   **Pre-Filter Overdrive/Saturation**: A dedicated soft-clipping drive stage applied right before the filter block to harmonic saturation.
+*   **Digital Wavefolding (Buchla/MicroFreak Style)**: Instead of clipping, loud signals fold backward upon themselves. Creates chaotic, bright, FM-like timbres when pushed hard.
 
-### Audio Features
-- **Logarithmic Volume**: Perceived loudness increases linearly with knob position
-- **Real-time Processing**: Phase accumulator updates at 22kHz in hardware timer ISR
-- **DC Offset Compensation**: Signal centered at 1.65V (midpoint of 0-3.3V range)
+### 3. Modulation & Envelopes
+*   **Main VCA Envelope (ADSR)**: The primary Attack-Decay-Sustain-Release envelope tied to the final volume amplifier.
+*   **Secondary Modulation Envelope (AD)**: A completely separate Attack-Decay envelope that can be routed with bipolar amounts (-64 to +64) to Global Pitch, Filter Cutoff, or OSC 2 Pitch.
+*   **Multi-Wave LFO**: Global Low-Frequency Oscillator assignable to Pitch, Filter, or PWM.
+*   **Sample & Hold (ARP 2600 Style)**: Samples the LFSR Noise Generator exactly at the start of every LFO cycle, creating classic stepped, randomized modulation. S&H output can be routed to Pitch or Filter Cutoff.
+*   **Glide (Portamento)**: Slew limiter for sliding pitch between notes.
 
-### Testing & Profiling
-- **Execution Time Measurement**: Preprocessor-based testing framework
-  - Define `TEST_SCANKEYS` to measure task execution time
-  - Uses `micros()` for microsecond precision
-  - Runs 32 iterations for averaging
-  - Reports total and average execution time
-- **Test Mode Features**:
-  - `DISABLE_THREADS`: Skip normal FreeRTOS scheduler
-  - `DISABLE_ISRS`: Disable interrupts during testing
-  - Non-blocking task execution for isolated measurements
+### 4. Digital Effects (FX)
+*   **Digital Delay (Echo)**: An 8192-sample delay line with adjustable Time, Feedback, and Mix.
+*   **Chorus / Ensemble (Juno-60 Style)**: A bucket-brigade style delay line (2048 samples) driven by a dedicated internal sine-wave LFO to thicken mono signals into wide stereo-like pads.
+*   **Decimator (Sample Rate Reduction)**: Artificially drops the sample rate by holding the DSP output over several cycles, introducing aliasing and digital "ring".
+*   **Bitcrusher**: Destructively shifts the 8-bit output down to as low as 1-bit resolution for extreme lo-fi crunch and digital distortion.
 
-## Quick Start
+## Patch Memory System
+*   **16 Patch Slots**: Store and recall complete synth presets in flash memory
+*   **Patch Management Page**: Dedicated menu page for save/load/init operations
+*   **Dirty Flag Indicator**: Visual feedback when current patch has unsaved changes
 
-1. **Hardware Setup**: Connect ST NUCLEO-L432KC to StackSynth module via USB
-2. **Software**: Open in PlatformIO/VS Code
-3. **Libraries Required**:
-   - U8g2 (display driver)
-   - STM32duino FreeRTOS
-4. **Build & Upload**: Use PlatformIO upload button
-5. **Serial Monitor**: Open at 9600 baud for debug output
+## Enhanced Display Modes
+Long-press the joystick (1 second) to cycle through view modes:
 
-## Usage
+*   **Performance View (PERF)**: Original view with note display, volume, and waveform visualization
+*   **Oscilloscope View (SCOPE)**: Real-time waveform display with animated scope
+*   **Envelope View (ENV)**: Visual ADSR envelope shape with parameter values
 
-- **Play Notes**: Press keys C through B (12-key octave)
-- **Adjust Volume**: Rotate Knob 3 (rightmost knob)
-  - Clockwise: Increase volume
-  - Counter-clockwise: Decrease volume
-- **View Display**: Shows current note and volume level (0-8)
+## User Interface & Navigation
 
-## Documentation
+The flat interface has been upgraded to a hierarchical, multi-page menu system navigated via the Joystick and Rotary Knob:
 
-- [Lab Part 1](doc/LabPart1.md) - Basic key scanning and audio generation
-- [Lab Part 2](doc/LabPart2.md) - Mutex, knobs, CAN bus, execution time measurement
-- [Handshaking and auto-detection](doc/handshaking.md)
-- [Double buffering of audio samples](doc/doubleBuffer.md)
+1.  **Short Press the Joystick**: Toggle between **Performance Mode** and **Menu Mode**
+2.  **Long Press the Joystick** (1 sec): Cycle through view modes (PERF → SCOPE → ENV)
+3.  **Move the Joystick Left/Right**: Switch between parameter pages.
+4.  **Move the Joystick Up/Down**: Highlight a specific parameter on the active page
+5.  **Turn the Rotary Knob**: Change the value of the highlighted parameter
+
+### UI Menu Map
+Navigate using the Joystick (L/R) and edit with the four rotary knobs:
+*   `OSC`: Osc 1 Morph | Osc 2 Wave | Mix | Osc 2 Detune
+*   `OSC2`: Sub Osc Mix | Noise Mix | Ring Mod Mix | Wavefolder
+*   `FLT`: Cutoff | Resonance | Env Depth | Type (LP/HP/BP/Notch)
+*   `MODEL`: Model (STD/MOOG/MS20) | Drive Level
+*   `ENV`: Attack | Decay | Sustain | Release
+*   `MOD`: LFO Rate | LFO Depth | *Empty* | Glide Time
+*   `MENV`: Mod Env A | Mod Env D | Amount (+/-) | Target (Ptch/Flt/Osc2)
+*   `S&H`: S&H Depth | S&H Target | *Empty* | *Empty*
+*   `FX`: Delay Time | Delay Fbk | Delay Mix | Hard Sync Toggle
+*   `CHO`: Chorus Rate | Chorus Depth | Chorus Mix | Bitcrusher Lvl
+*   `PATCH`: Slot Select | Load | Save | Init
+
+## System Architecture
+
+The monolithic codebase has been restructured into a scalable C++ project:
+
+*   **`src/main.cpp`**: Orchestrates FreeRTOS tasks and system initialization.
+*   **`include/hw.h` / `src/hw.cpp`**: Hardware abstraction layer. Handles keyboard matrix scanning, joystick analog reads, and rotary encoder state machines within the 20ms `scanKeysTask`.
+*   **`include/ui.h` / `src/ui.cpp` / `src/ui_helpers.cpp`**: Manages the OLED display drawing via U8g2 and processes rotary knob rotations to update the correct DSP parameters. Runs in the 100ms `displayUpdateTask`. Uses `ui_helpers.cpp` and `sine_lut.h` for waveform visualization.
+*   **`include/dsp.h` / `src/dsp.cpp`**: The core sound engine. Runs entirely within the 22kHz `AudioISR` timer interrupt. Uses lock-free parameter buffering to ensure no audio dropouts occur while navigating the menu.
+*   **`include/globals.h` / `include/constants.h`**: Defines the shared `sysState` structures, hardware pins, and concurrency primitives (Mutexes) used for IPC between tasks.
+*   **`include/patch_memory.h` / `src/patch_memory.cpp`**: Patch memory management for storing/loading presets from STM32 flash memory. Handles CRC validation and thread-safe flash operations.
+
+## Building and Flashing
+
+This project is built using PlatformIO. To compile and upload to the Nucleo board:
+
+```bash
+pio run -t upload
+```
+
+Ensure the correct `lib_deps` are installed via `platformio.ini`:
+*   `olikraus/U8g2`
+*   `stm32duino/STM32duino FreeRTOS`
 
 ## Hardware Specifications
 
 - **MCU**: STM32L432KC (ARM Cortex-M4)
 - **Display**: SSD1305 128x32 OLED
-- **Audio**: 22kHz sample rate, 8-bit resolution
+- **Audio**: 22kHz sample rate, 8-bit resolution (PWM)
 - **Key Matrix**: 3 rows x 4 columns (scanned)
 - **Knobs**: Quadrature encoders via matrix
-
-## Project Structure
-
-```
-src/
-  main.cpp              # Main application code
-  
-doc/
-  LabPart1.md           # Part 1 lab instructions
-  LabPart2.md           # Part 2 lab instructions
-  handshaking.md        # Module handshaking protocol
-  doubleBuffer.md       # Audio buffering techniques
-  StackSynth-v1.pdf     # V1.1 schematic
-  StackSynth-v2.pdf     # V2.1 schematic
-```
-
-## Testing
-
-To measure execution time:
-```cpp
-// Uncomment in main.cpp:
-#define TEST_SCANKEYS
-```
-
-This will:
-1. Disable normal FreeRTOS threads
-2. Run scanKeysTask 32 times
-3. Output total and average execution time via Serial
-4. Halt with blinking LED
-
-## Technical Details
-
-### FreeRTOS Configuration
-- Preemptive scheduling enabled
-- Time slice: 1ms
-- Mutex with priority inheritance for synchronization
-- Stack overflow checking enabled
-
-### Audio Processing
-- **Phase Accumulator**: 32-bit for frequency accuracy
-- **Step Size Formula**: `S = (2^32 * f) / 22000`
-- **Volume Scaling**: Arithmetic right shift for signed values
-- **Frequency Range**: C (261.63Hz) to B (493.88Hz)
-
-### Key Matrix Scanning
-- Rows selected via 3-to-8 decoder (RA0-RA2)
-- Columns read as digital inputs (C0-C3)
-- 3µs settling delay between row select and column read
-- Active-low logic (0 = key pressed)
+- **Joystick**: Analog X/Y and digital push button
 
 ## License
 
-This project is for educational purposes as part of Embedded Systems coursework.
+This project is an advanced extension of the Embedded Systems coursework synthesizer.
