@@ -1,6 +1,22 @@
 #pragma once
 #include <Arduino.h>
 
+// ============================================================================
+// Mode configuration
+// ============================================================================
+
+// Choose one:
+//   MODE_BIDIRECTIONAL : send + receive (default, loopback test friendly)
+//   MODE_SENDER_ONLY   : send only (no decode/audio from CAN)
+//   MODE_RECEIVER_ONLY : receive only (ignores local key TX)
+#define MODE_BIDIRECTIONAL 0
+#define MODE_SENDER_ONLY 1
+#define MODE_RECEIVER_ONLY 2
+#define NODE_MODE MODE_BIDIRECTIONAL
+
+// CAN loopback (true for single-board testing, false for real two-board link)
+#define CAN_LOOPBACK false
+
 // Sampling rate
 const uint32_t SAMPLE_RATE = 22000;
 

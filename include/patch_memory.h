@@ -9,7 +9,9 @@
 
 // Flash storage addresses (STM32L432KC has 1KB EEPROM emulation area)
 // We'll use the last pages of flash for patch storage
+#ifndef FLASH_PAGE_SIZE
 #define FLASH_PAGE_SIZE 2048
+#endif
 #define PATCH_DATA_SIZE (sizeof(SynthParams) + 8)  // Params + metadata
 #define TOTAL_PATCH_DATA_SIZE (PATCH_SLOTS * PATCH_DATA_SIZE)
 

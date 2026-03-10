@@ -100,12 +100,7 @@ struct SystemState {
     // UI State
     bool menuMode;
     MenuPage activePage;
-    uint8_t viewMode; // 0=Performance, 1=Scope, 2=Envelope, 3=Menu
 
-    // Parameter highlight (shows which param was last adjusted)
-    uint8_t highlightedKnob; // 0-3, which knob was last turned
-    uint32_t highlightEndTime; // timestamp when highlight expires
-    
     // Keyboard state
     int pressedKey; // -1 if no key
     uint32_t targetStepSize; // Used for glide
@@ -113,15 +108,10 @@ struct SystemState {
     // Patch management
     uint8_t currentPatchSlot;    // Currently loaded patch (0-15)
     bool patchDirty;             // True if current patch has unsaved changes
-    
-    uint8_t RX_Message[8];
-    bool isSenderNode; // true=sender, false=receiver
-    uint8_t currentOctave; // Default octave
-    int lastHandshakePos;
+
+    // View mode (0=Performance, 1=Scope, 2=Envelope)
+    uint8_t viewMode;
 };
 
 // Extern declaration for the shared state
 extern SystemState sysState;
-
-extern QueueHandle_t msgInQ;
-extern QueueHandle_t msgOutQ;

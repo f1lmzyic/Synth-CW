@@ -4,7 +4,7 @@
 #include "globals.h"
 
 // External display driver object
-extern U8G2_SSD1305_128X32_ADAFRUIT_F_HW_I2C u8g2;
+extern U8G2_SSD1305_128X32_ADAFRUIT_F_HW_I2C *u8g2;
 
 // Init Display
 void uiInit();

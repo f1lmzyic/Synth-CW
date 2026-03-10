@@ -6,7 +6,7 @@
 
 void hwInit();
 void setOutMuxBit(const uint8_t bitIdx, const bool value);
-void setRow(uint8_t rowIdx);
+void setRow(uint8_t rowIdx, bool outVal = true);
 std::bitset<4> readCols();
 
 // Task handles

@@ -108,8 +108,19 @@ uint32_t CAN_TX(uint32_t ID, uint8_t data[8]) {
     DISABLE                     //No time triggered mode
   };
 
+  // Check if CAN is in a valid state
+  if (CAN_Handle.State != HAL_CAN_STATE_READY && CAN_Handle.State != HAL_CAN_STATE_LISTENING) {
+    return HAL_ERROR;
+  }
+
   //Wait for free mailbox
-  while (!HAL_CAN_GetTxMailboxesFreeLevel(&CAN_Handle));
+  uint32_t timeout = 10000;
+  while (!HAL_CAN_GetTxMailboxesFreeLevel(&CAN_Handle)) {
+    timeout--;
+    if (timeout == 0) {
+      return HAL_TIMEOUT;
+    }
+  }
 
   //Start the transmission
   return (uint32_t) HAL_CAN_AddTxMessage(&CAN_Handle, &txHeader, data, NULL);
@@ -124,8 +135,19 @@ uint32_t CAN_CheckRXLevel() {
 uint32_t CAN_RX(uint32_t &ID, uint8_t data[8]) {
   CAN_RxHeaderTypeDef rxHeader;
 
+  // Check if CAN is in a valid state
+  if (CAN_Handle.State != HAL_CAN_STATE_READY && CAN_Handle.State != HAL_CAN_STATE_LISTENING) {
+    return HAL_ERROR;
+  }
+
   //Wait for message in FIFO
-  while (!HAL_CAN_GetRxFifoFillLevel(&CAN_Handle, 0));
+  uint32_t timeout = 10000;
+  while (!HAL_CAN_GetRxFifoFillLevel(&CAN_Handle, 0)) {
+    timeout--;
+    if (timeout == 0) {
+      return HAL_TIMEOUT;
+    }
+  }
   
   //Get the message from the FIFO
   uint32_t result = (uint32_t) HAL_CAN_GetRxMessage(&CAN_Handle, 0, &rxHeader, data);

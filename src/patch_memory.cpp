@@ -34,7 +34,10 @@ void patchMemoryInit() {
     patchMutex = xSemaphoreCreateMutex();
     if (patchMutex == NULL) {
         // Critical error - halt
-        while (1);
+        while(1) {
+            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+            for(volatile int i=0; i<100000; i++);
+        }
     }
     
     // Check if any valid patches exist
@@ -112,8 +115,15 @@ bool patchLoad(uint8_t slot) {
 
 // Wait for flash to be ready
 static void waitForFlashReady() {
+    uint32_t timeout = 1000000;
     while (__HAL_FLASH_GET_FLAG(FLASH_FLAG_BSY) != RESET) {
-        // Wait
+        timeout--;
+        if (timeout == 0) {
+            while(1) {
+                digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+                for(volatile int i=0; i<50000; i++);
+            }
+        }
     }
 }
 

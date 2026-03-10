@@ -1,5 +1,4 @@
 #include "hw.h"
-#include "constants.h"
 #include "ui.h" // For uiHandleKnobRotation
 #include "dsp.h" // For dspUpdateParams
 
@@ -34,12 +33,11 @@ void setOutMuxBit(const uint8_t bitIdx, const bool value) {
     digitalWrite(REN_PIN, LOW);
 }
 
-void setRow(uint8_t rowIdx, bool outVal) {
+void setRow(uint8_t rowIdx) {
     digitalWrite(REN_PIN, LOW);
     digitalWrite(RA0_PIN, rowIdx & 0x01);
     digitalWrite(RA1_PIN, (rowIdx >> 1) & 0x01);
     digitalWrite(RA2_PIN, (rowIdx >> 2) & 0x01);
-    digitalWrite(OUT_PIN, outVal);
     digitalWrite(REN_PIN, HIGH);
 }
 
@@ -58,8 +56,12 @@ void scanKeysTask(void * pvParameters) {
     
     static uint8_t knobPrevStates[4] = {0, 0, 0, 0};
     static int8_t knobLastDirections[4] = {0, 0, 0, 0};
+    
+    static uint32_t lastJoyPressTime = 0;
+    static bool prevJoyPressed = false;
+    static uint32_t joyPressStartTime = 0;
+    static bool longPressDetected = false;
 
-    static int prevPressedKeyIndex = -1;
     // Joystick navigation state
     const int16_t centerX = 540;
     const int16_t centerY = 500;
@@ -68,10 +70,6 @@ void scanKeysTask(void * pvParameters) {
     static int8_t yDirection = 0;
     static uint8_t consecutiveReads = 0;
     static uint32_t navCooldown = 0;
-
-    static int modulePosition = -1;
-    static bool eastOut = true;
-    static bool westOut = true;
 
     while(1) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -99,102 +97,23 @@ void scanKeysTask(void * pvParameters) {
             }
         }
         
-        // Read joystick button (row 5, col 2) and West input (row 5, col 3)
-        setRow(5, westOut);
+        // Read joystick button (row 5, col 2)
+        setRow(5);
         delayMicroseconds(3);
         std::bitset<4> cols5 = readCols();
         localInputs[20] = cols5[0];
         localInputs[21] = cols5[1];
         localInputs[22] = cols5[2]; // Joystick S button
-        localInputs[23] = cols5[3]; // West Input
-        bool westIn = !cols5[3];
+        localInputs[23] = cols5[3];
         
-        // Read East input (row 6, col 3)
-        setRow(6, eastOut);
-        delayMicroseconds(3);
-        std::bitset<4> cols6 = readCols();
-        bool eastIn = !cols6[3]; // East Input
-        localInputs[24] = cols6[0];
-        localInputs[25] = cols6[1];
-        localInputs[26] = cols6[2];
-        localInputs[27] = cols6[3];
-
-        // Handshaking Logic
-        if (modulePosition == -1 && millis() > 1000) {
-            if (!westIn) { 
-                // Leftmost module
-                modulePosition = 0;
-                eastOut = false; // Tell next module to the East
-                if (!eastIn) {
-                    // Standalone
-                    if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        sysState.currentOctave = 5;
-                        xSemaphoreGive(sysState.mutex);
-                    }
-                } else {
-                    if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        sysState.currentOctave = 4;
-                        xSemaphoreGive(sysState.mutex);
-                    }
-                }
-                uint8_t TX_Message[8] = {'H', 0, 0, 0, 0, 0, 0, 0};
-                xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-            } else if (sysState.lastHandshakePos != -1) {
-                // We received a handshake message
-                if (!westIn) { 
-                    // Our west neighbor turned their east output off! It's our turn.
-                    modulePosition = sysState.lastHandshakePos + 1;
-                    eastOut = false; // Tell next module to the East
-                    if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        sysState.currentOctave = 4 + modulePosition;
-                        xSemaphoreGive(sysState.mutex);
-                    }
-                    uint8_t TX_Message[8] = {'H', (uint8_t)modulePosition, 0, 0, 0, 0, 0, 0};
-                    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-                }
-            }
-        }
-        
-        // Determine pressed key (0-11)
+        // Determine pressed key (0-11) -> Map to MIDI note 60-71 (C4-B4)
         int pressedKey = -1;
-        int localPressedKeyIndex = -1;
         for(int i = 0; i < 12; i++){
             if(!localInputs[i]){
-                pressedKey = sysState.currentOctave * 12 + i;
-                localPressedKeyIndex = i;
+                pressedKey = 60 + i;
                 break;
             }
         }
-        
-        if (localPressedKeyIndex != prevPressedKeyIndex) {
-            uint8_t TX_Message[8] = {0};
-            if (localPressedKeyIndex != -1) {
-                TX_Message[0] = 'P';
-                TX_Message[1] = sysState.currentOctave;
-                TX_Message[2] = localPressedKeyIndex;
-            } else if (prevPressedKeyIndex != -1) {
-                TX_Message[0] = 'R';
-                TX_Message[1] = sysState.currentOctave;
-                TX_Message[2] = prevPressedKeyIndex;
-            }
-            if (TX_Message[0] != 0) {
-#if (NODE_MODE != MODE_RECEIVER_ONLY)
-                xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-#endif
-#if (NODE_MODE != MODE_SENDER_ONLY)
-                // Avoid duplicate local decode in BIDIRECTIONAL + loopback
-                if (!(CAN_LOOPBACK && (NODE_MODE == MODE_BIDIRECTIONAL))) {
-                    xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
-                }
-#endif
-            }
-            prevPressedKeyIndex = localPressedKeyIndex;
-        }
-
-        // Menu Navigation - joystick controls
-        // Joystick DOWN cycles through modes: Performance -> Scope -> Env -> Menu
-        // Joystick LEFT/RIGHT in menu: change pages
-        // Joystick UP: exit menu (go to Performance)
         
         // Read joystick analog
         int16_t joyX = analogRead(JOYX_PIN);
@@ -203,44 +122,40 @@ void scanKeysTask(void * pvParameters) {
 
         uint32_t now = millis();
 
-        // Mode cycling: Joystick DOWN moves to next mode
-        // Joystick Y threshold: center ~500, down > 700
-        const int16_t joyDownThreshold = 700;
-        
-        static bool joyDownPressed = false;
-        static uint32_t lastModeChange = 0;
-        
-        if (joyY > joyDownThreshold && !joyDownPressed) {
-            // Joystick just moved down - cycle to next mode
-            if (now - lastModeChange > 300) { // debounce
+        // Joystick Button - Short press toggles Menu Mode, Long press toggles View Mode
+        if(joyPressed && !prevJoyPressed) {
+            // Button just pressed
+            joyPressStartTime = now;
+            longPressDetected = false;
+        } else if (joyPressed && !longPressDetected) {
+            // Button held - check for long press (1 second)
+            if (now - joyPressStartTime > 1000) {
+                longPressDetected = true;
+                // Toggle view mode (Performance/Scope/Envelope)
                 if(sysState.mutex != NULL){
                     if(xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE){
-                        // Cycle: Performance(0) -> Scope(1) -> Env(2) -> Menu(3)
-                        uint8_t newMode = (sysState.viewMode + 1) % 4;
-                        
-                        // If entering menu mode, set menuMode = true
-                        if (newMode == 3) {
-                            sysState.menuMode = true;
-                        } else {
-                            sysState.menuMode = false;
-                        }
-                        
-                        sysState.viewMode = newMode;
+                        sysState.viewMode = (sysState.viewMode + 1) % 3;
                         xSemaphoreGive(sysState.mutex);
                     }
                 }
-                joyDownPressed = true;
-                lastModeChange = now;
             }
-        } else if (joyY <= joyDownThreshold - 100) {
-            // Released - allow next press
-            joyDownPressed = false;
+        } else if (!joyPressed && prevJoyPressed) {
+            // Button just released - short press if not long press
+            if (!longPressDetected && (now - joyPressStartTime < 1000)) {
+                if (now - lastJoyPressTime > 200) {
+                    lastJoyPressTime = now;
+                    if(sysState.mutex != NULL){
+                        if(xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE){
+                            sysState.menuMode = !sysState.menuMode;
+                            xSemaphoreGive(sysState.mutex);
+                        }
+                    }
+                }
+            }
         }
-        
-        // Joystick UP in menu mode: exit menu to Performance
-        const int16_t joyUpThreshold = 300;
-        static bool joyUpPressed = false;
-        
+        prevJoyPressed = joyPressed;
+
+        // Menu Navigation
         bool inMenu = false;
         if (sysState.mutex != NULL) {
             if (xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
@@ -248,35 +163,23 @@ void scanKeysTask(void * pvParameters) {
                 xSemaphoreGive(sysState.mutex);
             }
         }
-        
-        if (inMenu && joyY < joyUpThreshold && !joyUpPressed) {
-            // Joystick UP in menu - exit to Performance
-            if (now - lastModeChange > 300) {
-                if(sysState.mutex != NULL){
-                    if(xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE){
-                        sysState.menuMode = false;
-                        sysState.viewMode = 0; // Performance
-                        xSemaphoreGive(sysState.mutex);
-                    }
-                }
-                joyUpPressed = true;
-                lastModeChange = now;
-            }
-        } else if (joyY >= joyUpThreshold + 100) {
-            joyUpPressed = false;
-        }
 
-        // Page navigation within menu mode
         if (inMenu) {
             int8_t newXDir = 0;
+            int8_t newYDir = 0;
             
             if(joyX < centerX - threshold) newXDir = -1;
             else if(joyX > centerX + threshold) newXDir = +1;
             
+            if(joyY < centerY - threshold) newYDir = -1; // Up
+            else if(joyY > centerY + threshold) newYDir = +1; // Down
+            
             if(newXDir != 0 && newXDir == xDirection) consecutiveReads++;
+            else if(newYDir != 0 && newYDir == yDirection) consecutiveReads++;
             else consecutiveReads = 0;
             
             xDirection = newXDir;
+            yDirection = newYDir;
             
             if(consecutiveReads >= 3 && now > navCooldown) {
                 if (sysState.mutex != NULL) {
@@ -298,8 +201,6 @@ void scanKeysTask(void * pvParameters) {
                 consecutiveReads = 0;
             }
         }
-
-        // Remove the old joystick button handling - replaced by joystick DOWN
 
         // Knob decoding for all 4 knobs
         for (int i = 0; i < 4; i++) {

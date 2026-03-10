@@ -1,0 +1,18 @@
+--- include/globals.h
++++ include/globals.h
+@@ -87,6 +87,14 @@
+     // View mode (0=Performance, 1=Scope, 2=Envelope)
+     uint8_t viewMode;
++
++    // CAN Bus State
++    uint8_t RX_Message[8];
++    bool isSenderNode; // true=sender, false=receiver
++    uint8_t currentOctave; // Default octave
+ };
+ 
+ // Extern declaration for the shared state
+ extern SystemState sysState;
++
++extern QueueHandle_t msgInQ;
++extern QueueHandle_t msgOutQ;
++extern SemaphoreHandle_t CAN_TX_Semaphore;

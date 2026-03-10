@@ -1,0 +1,43 @@
+--- src/hw.cpp
++++ src/hw.cpp
+@@ -51,6 +51,7 @@
+     static uint32_t joyPressStartTime = 0;
+     static bool longPressDetected = false;
+ 
++    static int prevPressedKeyIndex = -1;
+     // Joystick navigation state
+     const int16_t centerX = 540;
+     const int16_t centerY = 500;
+@@ -87,11 +88,32 @@
+         // Determine pressed key (0-11) -> Map to MIDI note 60-71 (C4-B4)
+         int pressedKey = -1;
++        int localPressedKeyIndex = -1;
+         for(int i = 0; i < 12; i++){
+             if(!localInputs[i]){
+                 pressedKey = 60 + i;
++                localPressedKeyIndex = i;
+                 break;
+             }
+         }
+         
++        if (localPressedKeyIndex != prevPressedKeyIndex) {
++            if (sysState.isSenderNode) {
++                uint8_t TX_Message[8] = {0};
++                if (localPressedKeyIndex != -1) {
++                    TX_Message[0] = 'P';
++                    TX_Message[1] = sysState.currentOctave;
++                    TX_Message[2] = localPressedKeyIndex;
++                } else if (prevPressedKeyIndex != -1) {
++                    TX_Message[0] = 'R';
++                    TX_Message[1] = sysState.currentOctave;
++                    TX_Message[2] = prevPressedKeyIndex;
++                }
++                if (TX_Message[0] != 0) {
++                    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
++                }
++            }
++            prevPressedKeyIndex = localPressedKeyIndex;
++        }
++
+         // Read joystick analog
+         int16_t joyX = analogRead(JOYX_PIN);
