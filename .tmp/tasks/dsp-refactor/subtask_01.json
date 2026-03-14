@@ -1,0 +1,41 @@
+{
+  "id": "dsp-refactor-01",
+  "seq": "01",
+  "title": "Extract voice engine module (voice allocation, key mapping, lifecycle)",
+  "status": "completed",
+  "completed_at": "2026-03-14T00:00:00Z",
+  "completion_summary": "Extracted voice engine module with voice allocation, key mapping, and lifecycle management. Files: src/voice_engine.cpp (146 lines), include/voice_engine.h (33 lines). Round-robin voice stealing preserved, lock-free ISR access maintained.",
+  "depends_on": [],
+  "parallel": true,
+  "suggested_agent": "CoderAgent",
+  "context_files": [
+    {
+      "path": "/Users/kavin/.config/opencode/context/core/standards/code-quality.md",
+      "lines": "1-50",
+      "reason": "Pure functions, small functions (<50 lines), single responsibility"
+    },
+    {
+      "path": "/Users/kavin/.config/opencode/context/core/standards/code-analysis.md",
+      "lines": "1-30",
+      "reason": "Systematic analysis for extracting voice allocation logic"
+    }
+  ],
+  "reference_files": [
+    "src/dsp.cpp",
+    "include/globals.h",
+    "include/constants.h"
+  ],
+  "acceptance_criteria": [
+    "src/voice_engine.cpp created with voiceInit(), allocateVoice(), releaseVoice(), voiceUpdateParams()",
+    "include/voice_engine.h created with public interface declarations",
+    "Voice allocation uses round-robin and voice stealing patterns from original",
+    "Key mapping (pianoKeyMap) extracted with lock-free access pattern",
+    "Voice lifecycle states (active, retrigger, release) preserved",
+    "File <150 lines with single responsibility",
+    "No dynamic memory allocation in voice functions"
+  ],
+  "deliverables": [
+    "src/voice_engine.cpp",
+    "include/voice_engine.h"
+  ]
+}

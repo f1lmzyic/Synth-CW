@@ -1,0 +1,43 @@
+{
+  "id": "dsp-refactor-02",
+  "seq": "02",
+  "title": "Extract oscillators module (waveform generation, PolyBLEP, mixing)",
+  "status": "completed",
+"agent_id": "coder-agent",
+"started_at": "2026-03-14T00:00:00Z",
+"completed_at": "2026-03-14T00:00:00Z",
+"completion_summary": "Extracted oscillators module: waveform generation (getWaveSample), PolyBLEP band-limiting (polyBLEP, getBLSaw, getBLSquare), oscillator mixing (mixOscillators), wavefolder effect (applyWavefolder). Files: src/oscillators.cpp (95 lines), include/oscillators.h (129 lines). All inline functions in header for performance.",
+  "depends_on": [],
+  "parallel": true,
+  "suggested_agent": "CoderAgent",
+  "context_files": [
+    {
+      "path": "/Users/kavin/.config/opencode/context/core/standards/code-quality.md",
+      "lines": "1-50",
+      "reason": "Pure functions, small functions (<50 lines), single responsibility"
+    },
+    {
+      "path": "/Users/kavin/.config/opencode/context/core/standards/code-analysis.md",
+      "lines": "1-30",
+      "reason": "Systematic analysis for extracting oscillator logic"
+    }
+  ],
+  "reference_files": [
+    "src/dsp.cpp",
+    "include/sine_lut.h",
+    "include/constants.h"
+  ],
+  "acceptance_criteria": [
+    "src/oscillators.cpp created with getWaveSample(), polyBLEP(), getBLSaw(), getBLSquare(), mixOscillators()",
+    "include/oscillators.h created with public interface declarations",
+    "All waveform types implemented (saw, square, triangle, sine)",
+    "PolyBLEP band-limiting functions extracted correctly",
+    "Oscillator mixing (OSC1, OSC2, sub, ring mod) preserved",
+    "Wavefolder function extracted",
+    "File <200 lines with single responsibility"
+  ],
+  "deliverables": [
+    "src/oscillators.cpp",
+    "include/oscillators.h"
+  ]
+}

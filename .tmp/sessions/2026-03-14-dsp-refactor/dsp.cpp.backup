@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include "constants.h"
 #include "sine_lut.h"
+#include "voice_engine.h"
 
 const char* waveformNames[] = {"Saw", "Sqr", "Tri", "Sin", "-"};
 
@@ -10,15 +11,14 @@ static SynthParams localParams;
 static volatile uint32_t currentStepSize = 0;
 static volatile uint32_t targetStepSize = 0;
 
-// DSP state
+// Legacy single voice support (for fallback)
 static uint32_t phase1 = 0;
 static uint32_t phase2 = 0;
 static uint32_t lfoPhase = 0;
 
-// Envelope state
+// Legacy envelope state
 static uint32_t envPhase = 0;
 static int32_t envValue = 0; // 0 to 255<<8
-enum EnvState { ENV_IDLE, ENV_ATTACK, ENV_DECAY, ENV_SUSTAIN, ENV_RELEASE };
 static EnvState envState = ENV_IDLE;
 
 // Mod Envelope state
@@ -57,11 +57,6 @@ static int32_t moog_s[4] = {0, 0, 0, 0};
 // MS-20 filter state
 static int32_t ms20_s[2] = {0, 0};
 
-// Note frequencies - calibrated for 22kHz sample rate
-const uint32_t baseStepSizes[] = {51076057, 54113183, 57330935, 60740010, 64351798,
-                                  68178355, 72232452, 76527617, 81078186, 85899345,
-                                  91007186, 96418755};
-
 // ============================================================================
 // Parameter smoothing (prevents zipper noise)
 // ============================================================================
@@ -71,6 +66,9 @@ static int32_t smoothVol = 4;
 void dspInit() {
     memset(delayBuffer, 0, sizeof(delayBuffer));
     memset(chorusBuffer, 0, sizeof(chorusBuffer));
+    
+    // Initialize voice engine
+    voiceEngineInit();
 
     // Default params - starting with a good basic sound
     localParams.osc1WaveMorph = 0;      // Sawtooth
@@ -134,47 +132,13 @@ void dspInit() {
     }
 }
 
-// Calculate step size for a given MIDI note
-static uint32_t getStepSizeForMidiNote(int note) {
-    if (note < 0) return 0;
-
-    int noteIndex = note % 12;
-    int octave = (note / 12) - 5;
-
-    uint32_t stepSize = baseStepSizes[noteIndex];
-
-    if (octave > 0) {
-        stepSize <<= octave;
-    } else if (octave < 0) {
-        stepSize >>= (-octave);
-    }
-    return stepSize;
-}
-
 void dspUpdateParams() {
     if (sysState.mutex != NULL) {
         if (xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
             localParams = sysState.params;
 
-            int key = sysState.pressedKey;
-
-            if (key >= 0) {
-                targetStepSize = getStepSizeForMidiNote(key);
-                if (envState == ENV_IDLE || envState == ENV_RELEASE) {
-                    envState = ENV_ATTACK;
-                    modEnvState = ENV_ATTACK;
-                    if (localParams.glideTime == 0) {
-                        currentStepSize = targetStepSize;
-                    }
-                }
-            } else {
-                if (envState != ENV_IDLE) {
-                    envState = ENV_RELEASE;
-                }
-                if (modEnvState != ENV_IDLE) {
-                    modEnvState = ENV_RELEASE;
-                }
-            }
+            // Update voice allocation and lifecycle
+            voiceEngineUpdateParams();
 
             smoothCutoff = localParams.filterCutoff;
             smoothVol = localParams.masterVol;
@@ -247,24 +211,7 @@ inline int32_t getBLSquare(uint32_t phase, uint32_t phaseInc) {
 
 void sampleISR() {
     // ========================================================================
-    // 1. Glide (Portamento)
-    // ========================================================================
-    if (currentStepSize != targetStepSize) {
-        int32_t diff = targetStepSize - currentStepSize;
-        int32_t glideFactor = 1 + (localParams.glideTime * 50);
-        int32_t step = diff / glideFactor;
-        if (abs(step) < 500) step = (diff > 0) ? 500 : -500;
-        
-        currentStepSize += step;
-        
-        if ((step > 0 && currentStepSize > targetStepSize) ||
-            (step < 0 && currentStepSize < targetStepSize)) {
-            currentStepSize = targetStepSize;
-        }
-    }
-
-    // ========================================================================
-    // 2. LFO
+    // 1. LFO (shared across all voices)
     // ========================================================================
     uint32_t lfoInc = 5000 + (localParams.lfoRate * 3000);
     lfoPhase += lfoInc;
@@ -283,7 +230,7 @@ void sampleISR() {
     lastLfoPhase = lfoPhase;
 
     // ========================================================================
-    // 3. Modulation Envelope
+    // 2. Modulation Envelope (shared)
     // ========================================================================
     int32_t modEnvCurrent = 0;
     switch(modEnvState) {
@@ -319,158 +266,224 @@ void sampleISR() {
     modEnvCurrent = ((modEnvValue >> 8) * localParams.modEnvAmount) / 64;
 
     // ========================================================================
-    // 4. Pitch Calculation with Modulations
+    // 3. Polyphonic voice generation (ES-synth2 style)
     // ========================================================================
-    uint32_t osc1Step = currentStepSize;
+    int32_t combinedVoiceOut = 0;  // Sum of all voice outputs
+    int32_t totalEnvCurrent = 0;   // Combined envelope for filter modulation
     
-    // LFO to pitch
-    if (localParams.lfoDepth > 0 && localParams.lfoTarget == 0) {
-        int32_t mod = (lfoVal * localParams.lfoDepth) >> 7;
-        osc1Step += (osc1Step * mod) >> 10;
-    }
+    uint8_t activeVoiceCount = 0;
     
-    // Mod envelope to pitch
-    if (localParams.modEnvTarget == 0) {
-        osc1Step += (osc1Step * modEnvCurrent) >> 10;
-    }
-    
-    // Sample & Hold to pitch
-    if (localParams.shTarget == 0 && localParams.shDepth > 0) {
-        int32_t mod = (shValue * localParams.shDepth) >> 7;
-        osc1Step += (osc1Step * mod) >> 10;
-    }
-
-    // OSC2 tuning
-    uint32_t osc2Step = osc1Step;
-    
-    // Detune (cents)
-    if (localParams.osc2Detune != 0) {
-        int32_t detuneFactor = 4096 + (localParams.osc2Detune * 4);
-        osc2Step = (osc2Step * detuneFactor) >> 12;
-    }
-    
-    // Octave shift
-    if (localParams.osc2Octave > 0) {
-        osc2Step <<= localParams.osc2Octave;
-    } else if (localParams.osc2Octave < 0) {
-        osc2Step >>= (-localParams.osc2Octave);
-    }
-    
-    // Mod envelope to OSC2 pitch
-    if (localParams.modEnvTarget == 2) {
-        osc2Step += (osc2Step * modEnvCurrent) >> 10;
-    }
-
-    // ========================================================================
-    // 5. Oscillators
-    // ========================================================================
-    uint32_t oldPhase1 = phase1;
-    
-    phase1 += osc1Step;
-    phase2 += osc2Step;
-
-    // Hard sync: reset OSC2 phase when OSC1 wraps
-    if (localParams.oscSync && phase1 < oldPhase1) {
-        phase2 = 0;
-    }
-
-    // OSC1 with morphing between waveforms
-    uint8_t waveIndex1 = localParams.osc1WaveMorph >> 6;  // 0-3
-    uint8_t waveIndex2 = waveIndex1 + 1;
-    if (waveIndex2 > 3) waveIndex2 = 3;
-    uint8_t morphFrac = (localParams.osc1WaveMorph & 0x3F) << 2; // 0-255
-
-    int32_t osc1a = getWaveSample((WaveformType)waveIndex1, phase1);
-    int32_t osc1b = getWaveSample((WaveformType)waveIndex2, phase1);
-    int32_t osc1Out = ((osc1a * (255 - morphFrac)) + (osc1b * morphFrac)) >> 8;
-
-    // OSC2
-    int32_t osc2Out = getWaveSample(localParams.osc2Wave, phase2);
-
-    // Sub oscillator (1 octave below OSC1)
-    int32_t subOut = ((phase1 & 0x80000000) ? 127 : -128);
-
-    // Ring modulation (OSC1 * OSC2)
-    int32_t ringOut = (osc1Out * osc2Out) >> 7;
-
-    // ========================================================================
-    // 6. Mixer
-    // ========================================================================
-    int32_t mix = localParams.mixOsc2;
-    int32_t vout = ((osc1Out * (100 - mix)) + (osc2Out * mix)) / 100;
-    
-    vout += (subOut * localParams.subOscMix) / 100;
-    vout += (noiseVal * localParams.noiseMix) / 100;
-    vout += (ringOut * localParams.ringModMix) / 100;
-
-    // Soft clip the mix bus
-    if (vout > 127) vout = 127 + ((vout - 127) >> 2);
-    if (vout < -128) vout = -128 - ((-128 - vout) >> 2);
-
-    // ========================================================================
-    // 7. Wavefolder
-    // ========================================================================
-    if (localParams.wavefold > 0) {
-        int32_t threshold = 127 - (localParams.wavefold >> 1);
-        if (threshold < 32) threshold = 32;
-        
-        int32_t gain = 1 + (localParams.wavefold >> 4);
-        int32_t folded = vout * gain;
-        
-        while (folded > threshold || folded < -threshold) {
-            if (folded > threshold) {
-                folded = (threshold << 1) - folded;
-            } else if (folded < -threshold) {
-                folded = -(threshold << 1) - folded;
-            }
-        }
-        vout = folded;
-    }
-
-    // ========================================================================
-    // 8. VCA Envelope
-    // ========================================================================
-    int32_t envCurrent = 0;
-    switch(envState) {
-        case ENV_ATTACK: {
-            int32_t step = (255 << 8) / (1 + localParams.envAttack * 2);
-            envValue += step;
-            if (envValue >= (255 << 8)) {
-                envValue = 255 << 8;
-                envState = ENV_DECAY;
-            }
-            break;
-        }
-        case ENV_DECAY: {
-            int32_t target = localParams.envSustain << 9;
-            int32_t step = (255 << 8) / (1 + localParams.envDecay * 2);
-            envValue -= step;
-            if (envValue <= target) {
-                envValue = target;
-                envState = ENV_SUSTAIN;
-            }
-            break;
-        }
-        case ENV_SUSTAIN:
-            envValue = localParams.envSustain << 9;
-            break;
-        case ENV_RELEASE: {
+    // First: Handle release envelopes for ALL voices (including inactive ones)
+    // This must be outside the voiceActive check because released voices
+    // need to decay to silence before becoming truly inactive
+    for (int v = 0; v < POLYPHONY; v++) {
+        // Handle release phase for voices that are being released
+        if (!voiceActive[v] && voiceEnvValue[v] > 0) {
+            // Release - decay envelope
             int32_t step = (255 << 8) / (1 + localParams.envRelease * 2);
-            envValue -= step;
-            if (envValue <= 0) {
-                envValue = 0;
-                envState = ENV_IDLE;
+            voiceEnvValue[v] -= step;
+            if (voiceEnvValue[v] <= 0) {
+                voiceEnvValue[v] = 0;
+                voiceEnvState[v] = VOICE_ENV_IDLE;
             }
-            break;
         }
-        case ENV_IDLE:
-            envValue = 0;
-            break;
     }
-    envCurrent = envValue >> 8; // 0-255
+    
+    for (int v = 0; v < POLYPHONY; v++) {
+        if (!voiceActive[v]) continue;
+        
+        activeVoiceCount++;
+        
+        // Voice glide (portamento)
+        if (voiceStep[v] != voiceTargetStep[v]) {
+            int32_t diff = voiceTargetStep[v] - voiceStep[v];
+            int32_t glideFactor = 1 + (localParams.glideTime * 50);
+            int32_t step = diff / glideFactor;
+            if (abs(step) < 500) step = (diff > 0) ? 500 : -500;
+            
+            voiceStep[v] += step;
+            
+            if ((step > 0 && voiceStep[v] > voiceTargetStep[v]) ||
+                (step < 0 && voiceStep[v] < voiceTargetStep[v])) {
+                voiceStep[v] = voiceTargetStep[v];
+            }
+        }
+        
+        // Voice pitch with modulations
+        uint32_t osc1Step = voiceStep[v];
+        
+        // LFO to pitch
+        if (localParams.lfoDepth > 0 && localParams.lfoTarget == 0) {
+            int32_t mod = (lfoVal * localParams.lfoDepth) >> 7;
+            osc1Step += (osc1Step * mod) >> 10;
+        }
+        
+        // Mod envelope to pitch
+        if (localParams.modEnvTarget == 0) {
+            osc1Step += (osc1Step * modEnvCurrent) >> 10;
+        }
+        
+        // Sample & Hold to pitch
+        if (localParams.shTarget == 0 && localParams.shDepth > 0) {
+            int32_t mod = (shValue * localParams.shDepth) >> 7;
+            osc1Step += (osc1Step * mod) >> 10;
+        }
 
-    // Apply VCA
-    vout = (vout * envCurrent) >> 8;
+        // OSC2 tuning
+        uint32_t osc2Step = osc1Step;
+        
+        // Detune (cents)
+        if (localParams.osc2Detune != 0) {
+            int32_t detuneFactor = 4096 + (localParams.osc2Detune * 4);
+            osc2Step = (osc2Step * detuneFactor) >> 12;
+        }
+        
+        // Octave shift
+        if (localParams.osc2Octave > 0) {
+            osc2Step <<= localParams.osc2Octave;
+        } else if (localParams.osc2Octave < 0) {
+            osc2Step >>= (-localParams.osc2Octave);
+        }
+        
+        // Mod envelope to OSC2 pitch
+        if (localParams.modEnvTarget == 2) {
+            osc2Step += (osc2Step * modEnvCurrent) >> 10;
+        }
+
+        // Advance phases
+        uint32_t oldPhase = voicePhase[v];
+        voicePhase[v] += osc1Step;
+        
+        uint32_t osc2Phase = voicePhase[v] + ((voicePhase[v] >> 12) * (osc2Step - osc1Step) >> 12);
+        
+        // Hard sync: reset OSC2 phase when OSC1 wraps
+        if (localParams.oscSync && voicePhase[v] < oldPhase) {
+            osc2Phase = 0;
+        }
+
+        // OSC1 with morphing between waveforms
+        uint8_t waveIndex1 = localParams.osc1WaveMorph >> 6;  // 0-3
+        uint8_t waveIndex2 = waveIndex1 + 1;
+        if (waveIndex2 > 3) waveIndex2 = 3;
+        uint8_t morphFrac = (localParams.osc1WaveMorph & 0x3F) << 2; // 0-255
+
+        int32_t osc1a = getWaveSample((WaveformType)waveIndex1, voicePhase[v]);
+        int32_t osc1b = getWaveSample((WaveformType)waveIndex2, voicePhase[v]);
+        int32_t osc1Out = ((osc1a * (255 - morphFrac)) + (osc1b * morphFrac)) >> 8;
+
+        // OSC2
+        int32_t osc2Out = getWaveSample(localParams.osc2Wave, osc2Phase);
+
+        // Sub oscillator (1 octave below OSC1)
+        int32_t subOut = ((voicePhase[v] & 0x80000000) ? 127 : -128);
+
+        // Ring modulation (OSC1 * OSC2)
+        int32_t ringOut = (osc1Out * osc2Out) >> 7;
+
+        // Mixer for this voice
+        int32_t mix = localParams.mixOsc2;
+        int32_t voiceMix = ((osc1Out * (100 - mix)) + (osc2Out * mix)) / 100;
+        
+        voiceMix += (subOut * localParams.subOscMix) / 100;
+        voiceMix += (noiseVal * localParams.noiseMix) / 100;
+        voiceMix += (ringOut * localParams.ringModMix) / 100;
+
+        // Soft clip the mix bus
+        if (voiceMix > 127) voiceMix = 127 + ((voiceMix - 127) >> 2);
+        if (voiceMix < -128) voiceMix = -128 - ((-128 - voiceMix) >> 2);
+
+        // Wavefolder
+        if (localParams.wavefold > 0) {
+            int32_t threshold = 127 - (localParams.wavefold >> 1);
+            if (threshold < 32) threshold = 32;
+            
+            int32_t gain = 1 + (localParams.wavefold >> 4);
+            int32_t folded = voiceMix * gain;
+            
+            while (folded > threshold || folded < -threshold) {
+                if (folded > threshold) {
+                    folded = (threshold << 1) - folded;
+                } else if (folded < -threshold) {
+                    folded = -(threshold << 1) - folded;
+                }
+            }
+            voiceMix = folded;
+        }
+        
+        // =========================================================================
+        // Voice Envelope (per-voice ADSR)
+        // =========================================================================
+        int32_t voiceEnv = 0;
+        
+        if (voiceRetrigger[v]) {
+            // Start attack
+            voiceEnvValue[v] = 0;
+            voiceRetrigger[v] = false;
+            voiceEnvState[v] = VOICE_ENV_ATTACK;
+        }
+        
+        // ADSR envelope for this voice
+        if (voiceEnvValue[v] == 0 && voiceActive[v]) {
+            // Start attack
+            voiceEnvValue[v] = 1;
+            voiceEnvState[v] = VOICE_ENV_ATTACK;
+        }
+        
+        // Note: Release envelope is handled in the separate loop above
+        // for all voices (including inactive ones)
+        
+        if (voiceEnvValue[v] < (255 << 8)) {
+            // Attack
+            int32_t step = (255 << 8) / (1 + localParams.envAttack * 2);
+            voiceEnvValue[v] += step;
+            if (voiceEnvValue[v] >= (255 << 8)) {
+                voiceEnvValue[v] = 255 << 8;
+                voiceEnvState[v] = VOICE_ENV_SUSTAIN;
+                // Decay to sustain
+                int32_t target = localParams.envSustain << 9;
+                step = (255 << 8) / (1 + localParams.envDecay * 2);
+                voiceEnvValue[v] -= step;
+                if (voiceEnvValue[v] < target) {
+                    voiceEnvValue[v] = target;
+                }
+            }
+        } else {
+            // Sustain
+            int32_t target = localParams.envSustain << 9;
+            if (voiceEnvValue[v] > target) {
+                // Continue decay to sustain
+                int32_t step = (255 << 8) / (1 + localParams.envDecay * 2);
+                voiceEnvValue[v] -= step;
+                if (voiceEnvValue[v] < target) {
+                    voiceEnvValue[v] = target;
+                }
+            }
+        }
+        
+        voiceEnv = voiceEnvValue[v] >> 8; // 0-255
+        
+        // Apply VCA
+        voiceMix = (voiceMix * voiceEnv) >> 8;
+        
+        // Add to combined output
+        combinedVoiceOut += voiceMix;
+        totalEnvCurrent += voiceEnv;
+    }
+    
+    // Average the envelope for filter modulation
+    if (activeVoiceCount > 0) {
+        totalEnvCurrent = (totalEnvCurrent + activeVoiceCount / 2) / activeVoiceCount;
+    }
+    
+    // Scale down output to prevent clipping when multiple voices are playing
+    // Use averaging like ES-synth2: Vout += waveform/POLYPHONY
+    int32_t vout;
+    if (activeVoiceCount > 0) {
+        // Scale by active voices to prevent clipping
+        vout = (combinedVoiceOut * POLYPHONY) / (POLYPHONY + activeVoiceCount);
+    } else {
+        vout = 0;
+    }
 
     // ========================================================================
     // 9. Filter Section
@@ -481,7 +494,7 @@ void sampleISR() {
     if (localParams.lfoTarget == 1 && localParams.lfoDepth > 0) {
         cutoff += (lfoVal * localParams.lfoDepth) >> 6;
     }
-    cutoff += (envCurrent * localParams.filterEnvDepth) >> 6;
+    cutoff += (totalEnvCurrent * localParams.filterEnvDepth) >> 6;
     
     if (localParams.modEnvTarget == 1) {
         cutoff += modEnvCurrent >> 1;

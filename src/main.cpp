@@ -43,10 +43,43 @@ void decodeTask(void * pvParameters) {
 #if (NODE_MODE != MODE_SENDER_ONLY)
         if (sysState.mutex != NULL) {
             if (xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE) {
+                uint8_t msgType = RX_Message[0];
+                uint8_t octave = RX_Message[1];
+                uint8_t keyIndex = RX_Message[2];
+                uint8_t keyboardId = RX_Message[3];  // New: keyboard ID
+                
+                // Calculate global key number (0-35 for 3 keyboards)
+                uint8_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
+                
                 for(int i=0; i<8; i++) sysState.RX_Message[i] = RX_Message[i];
-                if (RX_Message[0] == 'P') sysState.pressedKey = RX_Message[1] * 12 + RX_Message[2];
-                else if (RX_Message[0] == 'R') sysState.pressedKey = -1;
-                else if (RX_Message[0] == 'H') sysState.lastHandshakePos = RX_Message[1];
+                
+                if (msgType == 'P') {
+                    // Key press - add to pressed keys
+                    if (!sysState.pressedKeys[globalKey]) {
+                        sysState.pressedKeys[globalKey] = 1;
+                        sysState.numPressedKeys++;
+                    }
+                    // Legacy support - first key becomes pressedKey
+                    if (sysState.pressedKey == -1) {
+                        sysState.pressedKey = octave * 12 + keyIndex;
+                    }
+                }
+                else if (msgType == 'R') {
+                    // Key release - remove from pressed keys
+                    if (sysState.pressedKeys[globalKey]) {
+                        sysState.pressedKeys[globalKey] = 0;
+                        if (sysState.numPressedKeys > 0) sysState.numPressedKeys--;
+                    }
+                    // Legacy support - clear pressedKey if it's this key
+                    int legacyKey = octave * 12 + keyIndex;
+                    if (sysState.pressedKey == legacyKey) {
+                        sysState.pressedKey = -1;  // Will be updated by voice allocation
+                    }
+                }
+                else if (msgType == 'H') {
+                    sysState.lastHandshakePos = RX_Message[1];
+                    sysState.keyboardId = RX_Message[1];
+                }
                 xSemaphoreGive(sysState.mutex);
             }
         }
@@ -158,6 +191,15 @@ void setup() {
     sysState.isSenderNode = true;
     sysState.currentOctave = 5; // C4 is 60 -> 5*12=60
     sysState.lastHandshakePos = -1;
+    sysState.keyboardId = 0;  // Default keyboard ID
+    sysState.isPolyphonic = true;  // Enable polyphonic mode
+    
+    // Initialize polyphony arrays
+    memset((void*)sysState.pressedKeys, 0, MAX_TOTAL_KEYS);
+    sysState.numPressedKeys = 0;
+    memset((void*)sysState.voiceKey, 0xFF, POLYPHONY);
+    memset((void*)sysState.voiceActive, 0, POLYPHONY);
+    
     for(int i=0; i<8; i++) sysState.RX_Message[i] = 0;
 
     dspInit();

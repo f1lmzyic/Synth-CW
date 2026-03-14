@@ -60,6 +60,8 @@ void scanKeysTask(void * pvParameters) {
     static int8_t knobLastDirections[4] = {0, 0, 0, 0};
 
     static int prevPressedKeyIndex = -1;
+    // Track keyboard ID (set during handshaking)
+    static uint8_t localKeyboardId = 0;
     // Joystick navigation state
     const int16_t centerX = 540;
     const int16_t centerY = 500;
@@ -81,7 +83,7 @@ void scanKeysTask(void * pvParameters) {
         
         // Scan key matrix rows 0-4
         for(int i = 0; i < 5; i++){
-            setRow(i);
+            setRow(i, true);  // Enable row for key scanning
             delayMicroseconds(3);
             std::bitset<4> cols = readCols();
             localInputs[i*4] = cols[0];
@@ -122,31 +124,38 @@ void scanKeysTask(void * pvParameters) {
         // Handshaking Logic
         if (modulePosition == -1 && millis() > 1000) {
             if (!westIn) { 
-                // Leftmost module
-                modulePosition = 0;
-                eastOut = false; // Tell next module to the East
-                if (!eastIn) {
-                    // Standalone
-                    if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        sysState.currentOctave = 5;
-                        xSemaphoreGive(sysState.mutex);
+                // Leftmost module OR we detected a neighbor turning off their east output
+                if (sysState.lastHandshakePos == -1) {
+                    // First module (leftmost)
+                    modulePosition = 0;
+                    localKeyboardId = 0;
+                    eastOut = false; // Tell next module to the East
+                    if (!eastIn) {
+                        // Standalone (no other keyboards)
+                        if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                            sysState.currentOctave = 5;
+                            sysState.keyboardId = 0;
+                            xSemaphoreGive(sysState.mutex);
+                        }
+                    } else {
+                        // Connected to more keyboards on the right
+                        if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                            sysState.currentOctave = 4;
+                            sysState.keyboardId = 0;
+                            xSemaphoreGive(sysState.mutex);
+                        }
                     }
+                    uint8_t TX_Message[8] = {'H', 0, 0, 0, 0, 0, 0, 0};
+                    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
                 } else {
-                    if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        sysState.currentOctave = 4;
-                        xSemaphoreGive(sysState.mutex);
-                    }
-                }
-                uint8_t TX_Message[8] = {'H', 0, 0, 0, 0, 0, 0, 0};
-                xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-            } else if (sysState.lastHandshakePos != -1) {
-                // We received a handshake message
-                if (!westIn) { 
-                    // Our west neighbor turned their east output off! It's our turn.
+                    // We received a handshake message from left neighbor - we're the next in chain
                     modulePosition = sysState.lastHandshakePos + 1;
+                    localKeyboardId = modulePosition;
                     eastOut = false; // Tell next module to the East
                     if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        sysState.currentOctave = 4 + modulePosition;
+                        // Octave decreases as we go right: keyboard 0=4, keyboard 1=3, keyboard 2=2
+                        sysState.currentOctave = 4 - modulePosition;
+                        sysState.keyboardId = localKeyboardId;
                         xSemaphoreGive(sysState.mutex);
                     }
                     uint8_t TX_Message[8] = {'H', (uint8_t)modulePosition, 0, 0, 0, 0, 0, 0};
@@ -155,39 +164,65 @@ void scanKeysTask(void * pvParameters) {
             }
         }
         
-        // Determine pressed key (0-11)
+        // ============================================================================
+        // Multi-key detection - detect ALL pressed keys (0-11), not just first
+        // ============================================================================
         int pressedKey = -1;
         int localPressedKeyIndex = -1;
-        for(int i = 0; i < 12; i++){
-            if(!localInputs[i]){
+        
+        // Track which keys are currently pressed (boolean array)
+        static bool keysPressed[KEYS_PER_KEYBOARD] = {false};
+        static bool keysPrevPressed[KEYS_PER_KEYBOARD] = {false};
+        
+        // Scan all 12 keys and build pressed keys array
+        for(int i = 0; i < KEYS_PER_KEYBOARD; i++){
+            // localInputs[i] == 0 means key is pressed (active low)
+            keysPressed[i] = !localInputs[i];
+            
+            // Keep legacy support - first key becomes pressedKey
+            if (keysPressed[i] && localPressedKeyIndex == -1) {
                 pressedKey = sysState.currentOctave * 12 + i;
                 localPressedKeyIndex = i;
-                break;
             }
         }
         
-        if (localPressedKeyIndex != prevPressedKeyIndex) {
-            uint8_t TX_Message[8] = {0};
-            if (localPressedKeyIndex != -1) {
-                TX_Message[0] = 'P';
-                TX_Message[1] = sysState.currentOctave;
-                TX_Message[2] = localPressedKeyIndex;
-            } else if (prevPressedKeyIndex != -1) {
-                TX_Message[0] = 'R';
-                TX_Message[1] = sysState.currentOctave;
-                TX_Message[2] = prevPressedKeyIndex;
-            }
-            if (TX_Message[0] != 0) {
+        // Compare with previous state to detect changes
+        for(int i = 0; i < KEYS_PER_KEYBOARD; i++) {
+            bool wasPressed = keysPrevPressed[i];
+            bool isPressed = keysPressed[i];
+            
+            if (wasPressed && !isPressed) {
+                // Key was released - send release message
+                uint8_t TX_Message[8] = {'R', sysState.currentOctave, (uint8_t)i, localKeyboardId, 0, 0, 0, 0};
 #if (NODE_MODE != MODE_RECEIVER_ONLY)
                 xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 #endif
 #if (NODE_MODE != MODE_SENDER_ONLY)
-                // Avoid duplicate local decode in BIDIRECTIONAL + loopback
+                if (!(CAN_LOOPBACK && (NODE_MODE == MODE_BIDIRECTIONAL))) {
+                    xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
+                }
+#endif
+            } else if (!wasPressed && isPressed) {
+                // Key was pressed - send press message
+                uint8_t TX_Message[8] = {'P', sysState.currentOctave, (uint8_t)i, localKeyboardId, 0, 0, 0, 0};
+#if (NODE_MODE != MODE_RECEIVER_ONLY)
+                xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+#endif
+#if (NODE_MODE != MODE_SENDER_ONLY)
                 if (!(CAN_LOOPBACK && (NODE_MODE == MODE_BIDIRECTIONAL))) {
                     xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
                 }
 #endif
             }
+        }
+        
+        // Update previous state for next iteration
+        for(int i = 0; i < KEYS_PER_KEYBOARD; i++) {
+            keysPrevPressed[i] = keysPressed[i];
+        }
+        
+        // Legacy single-key handling (for backward compatibility)
+        if (localPressedKeyIndex != prevPressedKeyIndex) {
             prevPressedKeyIndex = localPressedKeyIndex;
         }
 

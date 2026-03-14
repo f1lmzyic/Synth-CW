@@ -1,0 +1,49 @@
+{
+  "id": "dsp-refactor-07",
+  "seq": "07",
+  "title": "Refactor dsp_core module (sampleISR orchestration, parameter smoothing)",
+  "status": "completed",
+  "agent_id": "coder-agent",
+  "started_at": "2026-03-14T00:00:00Z",
+  "completed_at": "2026-03-14T00:00:00Z",
+  "completion_summary": "Refactored dsp_core.cpp (121 lines) with dspInit(), dspUpdateParams(), sampleISR() orchestrating all modular functions. Updated dsp.h with module headers. Preserves signal flow, parameter smoothing, DC blocking, lock-free voice access.",
+  "depends_on": ["01", "02"],
+  "parallel": false,
+  "suggested_agent": "CoderAgent",
+  "context_files": [
+    {
+      "path": "/Users/kavin/.config/opencode/context/core/standards/code-quality.md",
+      "lines": "1-50",
+      "reason": "Pure functions, small functions (<50 lines), explicit dependencies"
+    },
+    {
+      "path": "/Users/kavin/.config/opencode/context/core/standards/code-analysis.md",
+      "lines": "1-30",
+      "reason": "Systematic analysis for orchestrating signal flow"
+    }
+  ],
+  "reference_files": [
+    "src/dsp.cpp",
+    "include/dsp.h",
+    "include/globals.h",
+    "include/constants.h",
+    ".tmp/tasks/dsp-refactor/subtask_01.json",
+    ".tmp/tasks/dsp-refactor/subtask_02.json"
+  ],
+  "acceptance_criteria": [
+    "src/dsp_core.cpp created with dspInit(), dspUpdateParams(), sampleISR()",
+    "include/dsp.h updated to reference new modular headers",
+    "sampleISR() orchestration calls new modular functions (voice_engine, oscillators, envelopes, filters, effects, lfo_modulation)",
+    "Parameter smoothing logic preserved",
+    "Signal flow coordination maintained",
+    "DC blocking and master output preserved",
+    "Public API unchanged (dspInit, sampleISR, dspUpdateParams)",
+    "File <150 lines with single responsibility",
+    "No dynamic memory allocation in sampleISR()",
+    "Lock-free voice access pattern maintained"
+  ],
+  "deliverables": [
+    "src/dsp_core.cpp",
+    "include/dsp.h"
+  ]
+}

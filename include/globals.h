@@ -3,6 +3,14 @@
 #include <bitset>
 #include <STM32FreeRTOS.h>
 
+// ============================================================================
+// Polyphony configuration
+// ============================================================================
+#define POLYPHONY 8              // Maximum simultaneous voices
+#define MAX_KEYBOARD_IDS 3       // Maximum number of keyboards
+#define KEYS_PER_KEYBOARD 12    // Keys per keyboard module
+#define MAX_TOTAL_KEYS (MAX_KEYBOARD_IDS * KEYS_PER_KEYBOARD) // 36 keys max
+
 // Waveform definitions
 enum WaveformType {
     WAVEFORM_SAWTOOTH = 0,
@@ -106,9 +114,22 @@ struct SystemState {
     uint8_t highlightedKnob; // 0-3, which knob was last turned
     uint32_t highlightEndTime; // timestamp when highlight expires
     
-    // Keyboard state
+    // ============================================================================
+    // Polyphonic key state - supports multiple simultaneous key presses
+    // ============================================================================
+    // Legacy single key support (for backward compatibility)
     int pressedKey; // -1 if no key
     uint32_t targetStepSize; // Used for glide
+    
+    // Multi-key tracking (new polyphonic system)
+    volatile uint8_t pressedKeys[MAX_TOTAL_KEYS];    // Which keys (0-35) are currently pressed
+    volatile uint8_t numPressedKeys;                 // Count of currently pressed keys
+    volatile uint8_t keyboardId;                     // This keyboard's ID (0, 1, 2)
+    volatile bool isPolyphonic;                      // True if polyphonic mode is active
+    
+    // Voice allocation state
+    volatile uint8_t voiceKey[POLYPHONY];            // Which key (0-35) each voice is playing
+    volatile bool voiceActive[POLYPHONY];            // Is each voice currently playing
 
     // Patch management
     uint8_t currentPatchSlot;    // Currently loaded patch (0-15)
