@@ -225,8 +225,6 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
                             if (val < 0) val = 7; if (val > 7) val = 0;
                             sysState.params.bitcrushDepth = val;
                         }
-                        // wait, what about decimator rate?
-                        // Let's put it on knob 3 along with bitcrush? Actually, I only have 4 knobs. 
                         break;
                     case PAGE_PATCH:
                         if (knobIndex == 0) {

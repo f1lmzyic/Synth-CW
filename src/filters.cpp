@@ -1,4 +1,5 @@
 #include "filters.h"
+#include "constants.h"
 
 // ============================================================================
 // Filter module - State Variable, Moog Ladder, MS-20 filter models
@@ -34,7 +35,7 @@ int32_t processSVF(FilterState& state, int32_t input, uint8_t cutoff, uint8_t re
     // State Variable Filter with LP/HP/BP/Notch outputs
     // Resonance: higher value = less feedback = more resonance
     int32_t q = 255 - (resonance * 2);
-    if (q < 8) q = 8;  // Clamp feedback factor
+    if (q < FILTER_Q_MIN) q = FILTER_Q_MIN;  // Clamp feedback factor for stability
     
     // SVF core: integrate BP to get LP, differentiate LP to get BP, subtract for HP
     state.f_lp += ((cutoff * state.f_bp) >> 8);

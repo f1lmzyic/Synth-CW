@@ -54,17 +54,6 @@ int32_t processSampleHold(LfoState* state, int32_t noiseVal) {
         state->shValue = noiseVal;
     }
     state->lastLfoPhase = state->lfoPhase;
-    
-    return state->shValue;
-}
 
-int32_t processChorusLFO(LfoState* state, uint8_t chorusRate) {
-    // Separate LFO for chorus effect (sine wave)
-    state->chorusLfoPhase += 2000 + (chorusRate * 2000);
-    
-    // Lookup sine wave from table
-    uint8_t phaseMSB = state->chorusLfoPhase >> 24;
-    int32_t chorusLfo = sineLUT[phaseMSB];
-    
-    return chorusLfo;
+    return state->shValue;
 }

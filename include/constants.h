@@ -42,6 +42,17 @@ const int OUTR_PIN = A3;
 const int JOYX_PIN = A0;
 const int JOYY_PIN = A1;
 
+// Joystick calibration values
+const int16_t JOY_CENTER_X = 540;
+const int16_t JOY_CENTER_Y = 500;
+const int16_t JOY_THRESHOLD = 150;
+const int16_t JOY_DOWN_THRESHOLD = 700;
+const int16_t JOY_UP_THRESHOLD = 300;
+
+// DSP constants
+const int32_t GLIDE_STEP_MIN = 500;       // Minimum glide step size
+const int32_t FILTER_Q_MIN = 8;           // Minimum Q value for filter stability
+
 // Output multiplexer bits
 const int KNOB_MODE = 2;
 const int DEN_BIT = 3;

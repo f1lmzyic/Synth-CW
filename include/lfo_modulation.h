@@ -30,7 +30,3 @@ int32_t generateNoise(LfoState* state);
 // Process Sample & Hold - sample noise at LFO cycle start
 // Returns current S&H value
 int32_t processSampleHold(LfoState* state, int32_t noiseVal);
-
-// Process chorus LFO - separate LFO for chorus effect
-// Returns chorus LFO value (uses sine wave)
-int32_t processChorusLFO(LfoState* state, uint8_t chorusRate);

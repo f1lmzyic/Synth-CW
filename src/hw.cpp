@@ -59,15 +59,10 @@ void scanKeysTask(void * pvParameters) {
     static uint8_t knobPrevStates[4] = {0, 0, 0, 0};
     static int8_t knobLastDirections[4] = {0, 0, 0, 0};
 
-    static int prevPressedKeyIndex = -1;
     // Track keyboard ID (set during handshaking)
     static uint8_t localKeyboardId = 0;
     // Joystick navigation state
-    const int16_t centerX = 540;
-    const int16_t centerY = 500;
-    const int16_t threshold = 150;
     static int8_t xDirection = 0;
-    static int8_t yDirection = 0;
     static uint8_t consecutiveReads = 0;
     static uint32_t navCooldown = 0;
 
@@ -168,32 +163,27 @@ void scanKeysTask(void * pvParameters) {
         // Multi-key detection - detect ALL pressed keys (0-11), not just first
         // ============================================================================
         int pressedKey = -1;
-        int localPressedKeyIndex = -1;
-        
+
         // Track which keys are currently pressed (boolean array)
         static bool keysPressed[KEYS_PER_KEYBOARD] = {false};
         static bool keysPrevPressed[KEYS_PER_KEYBOARD] = {false};
-        
+
         // Scan all 12 keys and build pressed keys array
         for(int i = 0; i < KEYS_PER_KEYBOARD; i++){
             // localInputs[i] == 0 means key is pressed (active low)
             keysPressed[i] = !localInputs[i];
-            
-            // Keep legacy support - first key becomes pressedKey
-            if (keysPressed[i] && localPressedKeyIndex == -1) {
+
+            // Legacy support - first key becomes pressedKey
+            if (keysPressed[i] && pressedKey == -1) {
                 pressedKey = sysState.currentOctave * 12 + i;
-                localPressedKeyIndex = i;
             }
         }
-        
-        // Compare with previous state to detect changes
+
+        // Compare with previous state to detect changes and send messages
         for(int i = 0; i < KEYS_PER_KEYBOARD; i++) {
-            bool wasPressed = keysPrevPressed[i];
-            bool isPressed = keysPressed[i];
-            
-            if (wasPressed && !isPressed) {
-                // Key was released - send release message
-                uint8_t TX_Message[8] = {'R', sysState.currentOctave, (uint8_t)i, localKeyboardId, 0, 0, 0, 0};
+            if (keysPrevPressed[i] != keysPressed[i]) {
+                uint8_t msgType = keysPressed[i] ? 'P' : 'R';
+                uint8_t TX_Message[8] = {msgType, sysState.currentOctave, (uint8_t)i, localKeyboardId, 0, 0, 0, 0};
 #if (NODE_MODE != MODE_RECEIVER_ONLY)
                 xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 #endif
@@ -202,28 +192,8 @@ void scanKeysTask(void * pvParameters) {
                     xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
                 }
 #endif
-            } else if (!wasPressed && isPressed) {
-                // Key was pressed - send press message
-                uint8_t TX_Message[8] = {'P', sysState.currentOctave, (uint8_t)i, localKeyboardId, 0, 0, 0, 0};
-#if (NODE_MODE != MODE_RECEIVER_ONLY)
-                xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-#endif
-#if (NODE_MODE != MODE_SENDER_ONLY)
-                if (!(CAN_LOOPBACK && (NODE_MODE == MODE_BIDIRECTIONAL))) {
-                    xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
-                }
-#endif
+                keysPrevPressed[i] = keysPressed[i];
             }
-        }
-        
-        // Update previous state for next iteration
-        for(int i = 0; i < KEYS_PER_KEYBOARD; i++) {
-            keysPrevPressed[i] = keysPressed[i];
-        }
-        
-        // Legacy single-key handling (for backward compatibility)
-        if (localPressedKeyIndex != prevPressedKeyIndex) {
-            prevPressedKeyIndex = localPressedKeyIndex;
         }
 
         // Menu Navigation - joystick controls
@@ -234,18 +204,13 @@ void scanKeysTask(void * pvParameters) {
         // Read joystick analog
         int16_t joyX = analogRead(JOYX_PIN);
         int16_t joyY = analogRead(JOYY_PIN);
-        bool joyPressed = !localInputs[22];
-
         uint32_t now = millis();
 
         // Mode cycling: Joystick DOWN moves to next mode
-        // Joystick Y threshold: center ~500, down > 700
-        const int16_t joyDownThreshold = 700;
-        
         static bool joyDownPressed = false;
         static uint32_t lastModeChange = 0;
-        
-        if (joyY > joyDownThreshold && !joyDownPressed) {
+
+        if (joyY > JOY_DOWN_THRESHOLD && !joyDownPressed) {
             // Joystick just moved down - cycle to next mode
             if (now - lastModeChange > 300) { // debounce
                 if(sysState.mutex != NULL){
@@ -267,13 +232,12 @@ void scanKeysTask(void * pvParameters) {
                 joyDownPressed = true;
                 lastModeChange = now;
             }
-        } else if (joyY <= joyDownThreshold - 100) {
+        } else if (joyY <= JOY_DOWN_THRESHOLD - 100) {
             // Released - allow next press
             joyDownPressed = false;
         }
         
         // Joystick UP in menu mode: exit menu to Performance
-        const int16_t joyUpThreshold = 300;
         static bool joyUpPressed = false;
         
         bool inMenu = false;
@@ -284,7 +248,7 @@ void scanKeysTask(void * pvParameters) {
             }
         }
         
-        if (inMenu && joyY < joyUpThreshold && !joyUpPressed) {
+        if (inMenu && joyY < JOY_UP_THRESHOLD && !joyUpPressed) {
             // Joystick UP in menu - exit to Performance
             if (now - lastModeChange > 300) {
                 if(sysState.mutex != NULL){
@@ -297,7 +261,7 @@ void scanKeysTask(void * pvParameters) {
                 joyUpPressed = true;
                 lastModeChange = now;
             }
-        } else if (joyY >= joyUpThreshold + 100) {
+        } else if (joyY >= JOY_UP_THRESHOLD + 100) {
             joyUpPressed = false;
         }
 
@@ -305,8 +269,8 @@ void scanKeysTask(void * pvParameters) {
         if (inMenu) {
             int8_t newXDir = 0;
             
-            if(joyX < centerX - threshold) newXDir = -1;
-            else if(joyX > centerX + threshold) newXDir = +1;
+            if(joyX < JOY_CENTER_X - JOY_THRESHOLD) newXDir = -1;
+            else if(joyX > JOY_CENTER_X + JOY_THRESHOLD) newXDir = +1;
             
             if(newXDir != 0 && newXDir == xDirection) consecutiveReads++;
             else consecutiveReads = 0;
@@ -333,8 +297,6 @@ void scanKeysTask(void * pvParameters) {
                 consecutiveReads = 0;
             }
         }
-
-        // Remove the old joystick button handling - replaced by joystick DOWN
 
         // Knob decoding for all 4 knobs
         for (int i = 0; i < 4; i++) {

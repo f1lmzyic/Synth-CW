@@ -215,16 +215,21 @@ bool patchSave(uint8_t slot, const char* name) {
 }
 
 // Get patch name from a slot
+// NOTE: Returns pointer to static buffer - not thread-safe!
+// Currently only called from displayUpdateTask, so this is safe in practice.
+// If multi-threaded access is needed, caller should provide buffer.
 const char* patchGetName(uint8_t slot) {
-    if (slot >= PATCH_SLOTS || !patchIsValid(slot)) {
-        return "";
-    }
-    
     static char nameBuffer[15];
+
+    if (slot >= PATCH_SLOTS || !patchIsValid(slot)) {
+        nameBuffer[0] = '\0';
+        return nameBuffer;
+    }
+
     Patch* patch = (Patch*)getPatchAddress(slot);
     strncpy(nameBuffer, (char*)patch->metadata.name, 14);
     nameBuffer[14] = '\0';
-    
+
     return nameBuffer;
 }
 

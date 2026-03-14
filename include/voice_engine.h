@@ -11,14 +11,15 @@
 enum VoiceEnvState { VOICE_ENV_IDLE, VOICE_ENV_ATTACK, VOICE_ENV_DECAY, VOICE_ENV_SUSTAIN, VOICE_ENV_RELEASE };
 
 // Voice state arrays (extern for ISR access - lock-free by design)
-extern uint32_t voicePhase[POLYPHONY];
-extern uint32_t voiceStep[POLYPHONY];
-extern uint32_t voiceTargetStep[POLYPHONY];
-extern int32_t voiceEnvValue[POLYPHONY];
-extern uint8_t voiceKey[POLYPHONY];
-extern bool voiceActive[POLYPHONY];
-extern bool voiceRetrigger[POLYPHONY];
-extern uint8_t voiceEnvState[POLYPHONY];
+// Marked volatile since they are shared between ISR and task contexts
+extern volatile uint32_t voicePhase[POLYPHONY];
+extern volatile uint32_t voiceStep[POLYPHONY];
+extern volatile uint32_t voiceTargetStep[POLYPHONY];
+extern volatile int32_t voiceEnvValue[POLYPHONY];
+extern volatile uint8_t voiceKey[POLYPHONY];
+extern volatile bool voiceActive[POLYPHONY];
+extern volatile bool voiceRetrigger[POLYPHONY];
+extern volatile uint8_t voiceEnvState[POLYPHONY];
 
 // Initialize all voice arrays to default state
 void voiceEngineInit(void);

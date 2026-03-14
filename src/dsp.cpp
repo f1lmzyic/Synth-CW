@@ -52,7 +52,7 @@ void sampleISR() {
         if (voiceStep[v] != voiceTargetStep[v]) {
             int32_t diff = voiceTargetStep[v] - voiceStep[v];
             int32_t step = diff / (1 + localParams.glideTime * 50);
-            if (abs(step) < 500) step = (diff > 0) ? 500 : -500;
+            if (abs(step) < GLIDE_STEP_MIN) step = (diff > 0) ? GLIDE_STEP_MIN : -GLIDE_STEP_MIN;
             voiceStep[v] += step;
             if ((step > 0 && voiceStep[v] > voiceTargetStep[v]) ||
                 (step < 0 && voiceStep[v] < voiceTargetStep[v]))

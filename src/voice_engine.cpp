@@ -10,15 +10,16 @@ static uint8_t pianoKeyMap[MAX_TOTAL_KEYS] = {0xFF};  // Reverse lookup
 
 // ============================================================================
 // Voice state arrays - exported for ISR access (lock-free by design)
+// Marked volatile since they are shared between ISR and task contexts
 // ============================================================================
-uint32_t voicePhase[POLYPHONY] = {0};
-uint32_t voiceStep[POLYPHONY] = {0};
-uint32_t voiceTargetStep[POLYPHONY] = {0};
-int32_t voiceEnvValue[POLYPHONY] = {0};
-uint8_t voiceKey[POLYPHONY] = {0xFF};
-bool voiceActive[POLYPHONY] = {false};
-bool voiceRetrigger[POLYPHONY] = {false};
-uint8_t voiceEnvState[POLYPHONY] = {VOICE_ENV_IDLE};
+volatile uint32_t voicePhase[POLYPHONY] = {0};
+volatile uint32_t voiceStep[POLYPHONY] = {0};
+volatile uint32_t voiceTargetStep[POLYPHONY] = {0};
+volatile int32_t voiceEnvValue[POLYPHONY] = {0};
+volatile uint8_t voiceKey[POLYPHONY] = {0xFF};
+volatile bool voiceActive[POLYPHONY] = {false};
+volatile bool voiceRetrigger[POLYPHONY] = {false};
+volatile uint8_t voiceEnvState[POLYPHONY] = {VOICE_ENV_IDLE};
 
 // Note frequencies - calibrated for 22kHz sample rate
 static const uint32_t baseStepSizes[] = {
@@ -31,15 +32,16 @@ static const uint32_t baseStepSizes[] = {
 // ============================================================================
 
 void voiceEngineInit(void) {
-    memset(voicePhase, 0, sizeof(voicePhase));
-    memset(voiceStep, 0, sizeof(voiceStep));
-    memset(voiceTargetStep, 0, sizeof(voiceTargetStep));
-    memset(voiceEnvValue, 0, sizeof(voiceEnvValue));
-    memset(voiceKey, 0xFF, sizeof(voiceKey));
-    memset(voiceActive, 0, sizeof(voiceActive));
-    memset(voiceRetrigger, 0, sizeof(voiceRetrigger));
+    // Cast away volatile for memset (safe during init before ISR starts)
+    memset((void*)voicePhase, 0, sizeof(voicePhase));
+    memset((void*)voiceStep, 0, sizeof(voiceStep));
+    memset((void*)voiceTargetStep, 0, sizeof(voiceTargetStep));
+    memset((void*)voiceEnvValue, 0, sizeof(voiceEnvValue));
+    memset((void*)voiceKey, 0xFF, sizeof(voiceKey));
+    memset((void*)voiceActive, 0, sizeof(voiceActive));
+    memset((void*)voiceRetrigger, 0, sizeof(voiceRetrigger));
     memset(pianoKeyMap, 0xFF, sizeof(pianoKeyMap));
-    memset(voiceEnvState, VOICE_ENV_IDLE, sizeof(voiceEnvState));
+    memset((void*)voiceEnvState, VOICE_ENV_IDLE, sizeof(voiceEnvState));
     voiceAllocIndex = 0;
 }
 
@@ -76,19 +78,10 @@ void voiceEngineUpdateParams(void) {
         }
     }
 
-    // Step 2: Handle release envelopes for all voices
-    for (int v = 0; v < POLYPHONY; v++) {
-        if (!voiceActive[v] && voiceEnvValue[v] > 0) {
-            int32_t step = (255 << 8) / (1 + sysState.params.envRelease * 2);
-            voiceEnvValue[v] -= step;
-            if (voiceEnvValue[v] <= 0) {
-                voiceEnvValue[v] = 0;
-                voiceEnvState[v] = VOICE_ENV_IDLE;
-            }
-        }
-    }
+    // NOTE: Release envelope processing is handled in sampleISR() at audio rate
+    // to ensure smooth envelope decay. Don't duplicate it here.
 
-    // Step 3: Allocate voices for newly pressed keys
+    // Step 2: Allocate voices for newly pressed keys
     for (int i = 0; i < MAX_TOTAL_KEYS; i++) {
         if (sysState.pressedKeys[i] && pianoKeyMap[i] == 0xFF) {
             // Find free voice
