@@ -55,9 +55,8 @@ std::bitset<4> readCols() {
 void scanKeysTask(void * pvParameters) {
     const TickType_t xFrequency = pdMS_TO_TICKS(20);
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    
-    static uint8_t knobPrevStates[4] = {0, 0, 0, 0};
-    static int8_t knobLastDirections[4] = {0, 0, 0, 0};
+
+    static Knob knobs[4] = {Knob(0), Knob(1), Knob(2), Knob(3)};
 
     // Track keyboard ID (set during handshaking)
     static uint8_t localKeyboardId = 0;
@@ -279,21 +278,9 @@ void scanKeysTask(void * pvParameters) {
 
         // Knob decoding for all 4 knobs
         for (int i = 0; i < 4; i++) {
-            if(knobCurrentStates[i] != knobPrevStates[i]){
-                int8_t direction = 0;
-                uint8_t transition = (knobPrevStates[i] << 2) | knobCurrentStates[i];
-                switch(transition){
-                    case 0b0001: case 0b1110: direction = 1; break;
-                    case 0b0100: case 0b1011: direction = -1; break;
-                    case 0b0011: case 0b1100: case 0b0101: case 0b1010:
-                        direction = knobLastDirections[i]; break;
-                    default: direction = 0; break;
-                }
-                if(direction != 0){
-                    uiHandleKnobRotation(i, direction);
-                    knobLastDirections[i] = direction;
-                }
-                knobPrevStates[i] = knobCurrentStates[i];
+            int8_t direction = knobs[i].update(knobCurrentStates[i]);
+            if (direction != 0) {
+                uiHandleKnobRotation(i, direction);
             }
         }
 
