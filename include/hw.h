@@ -7,9 +7,9 @@
 // Rotary encoder knob class with quadrature decoding
 class Knob {
 public:
-    Knob(uint8_t id) : m_id(id), m_prevState(0), m_lastDirection(0) {}
+    Knob() : m_prevState(0), m_lastDirection(0) {}
 
-    // returns direction
+    // Returns direction: -1, 0, or 1
     int8_t update(uint8_t currentState) {
         if (currentState == m_prevState) {
             return 0;
@@ -39,10 +39,7 @@ public:
         return direction;
     }
 
-    uint8_t getId() const { return m_id; }
-
 private:
-    uint8_t m_id;
     uint8_t m_prevState;
     int8_t m_lastDirection;
 };

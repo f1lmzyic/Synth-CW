@@ -60,7 +60,8 @@ void CAN_TX_ISR() {
             // Calculate global key number (keyboardId * 12 + keyIndex)
             uint16_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
 
-            for (int i = 0; i < 8; i++) sysState.RX_Message[i] = RX_Message[i];
+            // Copy for UI debug display
+            memcpy(sysState.RX_Message, RX_Message, 8);
 
             if (msgType == 'P') {
                 // Key press - add to pressed keys set

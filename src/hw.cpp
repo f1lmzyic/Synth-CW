@@ -5,6 +5,162 @@
 
 TaskHandle_t scanKeysHandle = NULL;
 
+static struct {
+    bool downPressed = false;
+    bool upPressed = false;
+    int8_t xDirection = 0;
+    uint8_t consecutiveReads = 0;
+    uint32_t lastModeChange = 0;
+    uint32_t navCooldown = 0;
+} joystickState;
+
+static void handleJoystickNavigation(int16_t joyX, int16_t joyY, uint32_t now) {
+    // Mode cycling: Joystick DOWN moves to next mode
+    if (joyY > JOY_DOWN_THRESHOLD && !joystickState.downPressed) {
+        if (now - joystickState.lastModeChange > 300) {
+            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+            if (lock) {
+                // Cycle: Performance(0) -> Scope(1) -> Env(2) -> Menu(3)
+                uint8_t newMode = (sysState.viewMode + 1) % 4;
+                sysState.menuMode = (newMode == 3);
+                sysState.viewMode = newMode;
+            }
+            joystickState.downPressed = true;
+            joystickState.lastModeChange = now;
+        }
+    } else if (joyY <= JOY_DOWN_THRESHOLD - 100) {
+        joystickState.downPressed = false;
+    }
+
+    // Check menu mode
+    bool inMenu = false;
+    {
+        MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+        if (lock) {
+            inMenu = sysState.menuMode;
+        }
+    }
+
+    // Joystick UP in menu mode: exit to Performance
+    if (inMenu && joyY < JOY_UP_THRESHOLD && !joystickState.upPressed) {
+        if (now - joystickState.lastModeChange > 300) {
+            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+            if (lock) {
+                sysState.menuMode = false;
+                sysState.viewMode = 0;
+            }
+            joystickState.upPressed = true;
+            joystickState.lastModeChange = now;
+        }
+    } else if (joyY >= JOY_UP_THRESHOLD + 100) {
+        joystickState.upPressed = false;
+    }
+
+    // Page navigation within menu mode
+    if (inMenu) {
+        int8_t newXDir = 0;
+        if (joyX < JOY_CENTER_X - JOY_THRESHOLD) newXDir = -1;
+        else if (joyX > JOY_CENTER_X + JOY_THRESHOLD) newXDir = +1;
+
+        if (newXDir != 0 && newXDir == joystickState.xDirection) {
+            joystickState.consecutiveReads++;
+        } else {
+            joystickState.consecutiveReads = 0;
+        }
+        joystickState.xDirection = newXDir;
+
+        if (joystickState.consecutiveReads >= 3 && now > joystickState.navCooldown) {
+            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+            if (lock) {
+                if (joystickState.xDirection < 0 && sysState.activePage > 0) {
+                    sysState.activePage = (MenuPage)(sysState.activePage - 1);
+                    joystickState.navCooldown = now + 200;
+                } else if (joystickState.xDirection > 0 && sysState.activePage < PAGE_COUNT - 1) {
+                    sysState.activePage = (MenuPage)(sysState.activePage + 1);
+                    joystickState.navCooldown = now + 200;
+                }
+            }
+            joystickState.consecutiveReads = 0;
+        }
+    }
+}
+
+// ============================================================================
+// Multi-keyboard connection handling
+// ============================================================================
+static void handleConnectionChange(bool westIn, bool eastIn, uint32_t now) {
+    // Reset handshake state to allow re-negotiation
+    sysState.eastOut = true;
+    sysState.lastHandshakePos = -1;
+    sysState.lastConnectionChangeTime = now;
+
+    // Clear pressed keys from disconnected keyboards
+    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+    if (lock) {
+        if (!westIn && sysState.prevWestIn) {
+            // Left neighbor disconnected - clear keys from left keyboards
+            uint16_t maxKeyToRemove = sysState.keyboardId * KEYS_PER_KEYBOARD;
+            for (auto it = sysState.pressedKeys.begin(); it != sysState.pressedKeys.end(); ) {
+                if (*it < maxKeyToRemove) {
+                    it = sysState.pressedKeys.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    }
+
+    sysState.prevWestIn = westIn;
+    sysState.prevEastIn = eastIn;
+}
+
+// ============================================================================
+// Perform handshake to determine keyboard position
+// ============================================================================
+static void performHandshake(bool westIn, bool eastIn) {
+    if (westIn) return; // Wait for left neighbor to be ready
+
+    sysState.eastOut = false; // Signal right neighbor we're ready
+
+    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+    if (lock) {
+        sysState.hasLeft = (sysState.lastHandshakePos >= 0);
+        sysState.hasRight = eastIn;
+
+        // Determine keyboard position in chain
+        if (!sysState.hasLeft) {
+            sysState.keyboardId = 0;
+        } else {
+            sysState.keyboardId = sysState.lastHandshakePos + 1;
+        }
+    }
+
+    // Broadcast position for right neighbor
+    uint8_t pos = sysState.hasLeft ? sysState.lastHandshakePos + 1 : 0;
+    uint8_t TX_Message[8] = {'H', pos, 0, 0, 0, 0, 0, 0};
+    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+}
+
+// ============================================================================
+// Update connection state (call every scan cycle)
+// ============================================================================
+static void updateConnectionState(bool westIn, bool eastIn) {
+    uint32_t now = millis();
+
+    // Detect connection change
+    if ((westIn != sysState.prevWestIn) || (eastIn != sysState.prevEastIn)) {
+        handleConnectionChange(westIn, eastIn, now);
+        return;
+    }
+
+    // Handshake after startup or after connection change settles
+    bool readyToHandshake = (now > HANDSHAKE_STARTUP_DELAY) &&
+                            (now - sysState.lastConnectionChangeTime > HANDSHAKE_SETTLE_TIME);
+    if (readyToHandshake && sysState.eastOut) {
+        performHandshake(westIn, eastIn);
+    }
+}
+
 void hwInit() {
     pinMode(RA0_PIN, OUTPUT);
     pinMode(RA1_PIN, OUTPUT);
@@ -52,46 +208,38 @@ std::bitset<4> readCols() {
     return result;
 }
 
-void scanKeysTask(void * pvParameters) {
+void scanKeysTask(void *pvParameters) {
     const TickType_t xFrequency = pdMS_TO_TICKS(20);
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
-    static Knob knobs[4] = {Knob(0), Knob(1), Knob(2), Knob(3)};
+    static Knob knobs[4];
 
-    // Track keyboard ID (set during handshaking)
-    static uint8_t localKeyboardId = 0;
-    // Joystick navigation state
-    static int8_t xDirection = 0;
-    static uint8_t consecutiveReads = 0;
-    static uint32_t navCooldown = 0;
-
-    static int modulePosition = -1;
-    static bool eastOut = true;
-    static bool westOut = true;
-
-    while(1) {
+    while (true) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
-        
+
         std::bitset<32> localInputs;
-        uint8_t knobCurrentStates[4] = {0, 0, 0, 0};
-        
+
         // Scan key matrix rows 0-4
-        for(int i = 0; i < 5; i++){
-            setRow(i, true);  // Enable row for key scanning
+        for (int i = 0; i < 5; i++) {
+            setRow(i, true); // Enable row for key scanning
             delayMicroseconds(3);
             std::bitset<4> cols = readCols();
-            localInputs[i*4] = cols[0];
-            localInputs[i*4+1] = cols[1];
-            localInputs[i*4+2] = cols[2];
-            localInputs[i*4+3] = cols[3];
-            
-            // Capture Knobs from rows 3 and 4
-            if(i == 3){
-                knobCurrentStates[3] = (cols[0] << 1) | cols[1];
-                knobCurrentStates[2] = (cols[2] << 1) | cols[3];
+            localInputs[i * 4] = cols[0];
+            localInputs[i * 4 + 1] = cols[1];
+            localInputs[i * 4 + 2] = cols[2];
+            localInputs[i * 4 + 3] = cols[3];
+
+            // Decode knobs from rows 3 and 4
+            if (i == 3) {
+                int8_t dir3 = knobs[3].update((cols[0] << 1) | cols[1]);
+                int8_t dir2 = knobs[2].update((cols[2] << 1) | cols[3]);
+                if (dir3 != 0) uiHandleKnobRotation(3, dir3);
+                if (dir2 != 0) uiHandleKnobRotation(2, dir2);
             } else if (i == 4) {
-                knobCurrentStates[1] = (cols[0] << 1) | cols[1];
-                knobCurrentStates[0] = (cols[2] << 1) | cols[3];
+                int8_t dir1 = knobs[1].update((cols[0] << 1) | cols[1]);
+                int8_t dir0 = knobs[0].update((cols[2] << 1) | cols[3]);
+                if (dir1 != 0) uiHandleKnobRotation(1, dir1);
+                if (dir0 != 0) uiHandleKnobRotation(0, dir0);
             }
         }
 
@@ -115,44 +263,9 @@ void scanKeysTask(void * pvParameters) {
         localInputs[26] = cols6[2];
         localInputs[27] = cols6[3];
 
-        // Handshaking Logic
-        if (modulePosition == -1 && millis() > 1000) {
-            if (!westIn) {
-                // Leftmost module OR we detected a neighbor turning off their east output
-                if (sysState.lastHandshakePos == -1) {
-                    // First module (leftmost)
-                    modulePosition = 0;
-                    localKeyboardId = 0;
-                    eastOut = false; // Tell next module to the East
-                    {
-                        MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-                        if (lock) {
-                            sysState.keyboardId = 0;
-                            sysState.hasLeft = false;  // Leftmost has no left neighbor
-                            sysState.hasRight = eastIn;
-                        }
-                    }
-                    uint8_t TX_Message[8] = {'H', 0, 0, 0, 0, 0, 0, 0};
-                    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-                } else {
-                    // We received a handshake message from left neighbor - we're the next in chain
-                    modulePosition = sysState.lastHandshakePos + 1;
-                    localKeyboardId = modulePosition;
-                    eastOut = false; // Tell next module to the East
-                    {
-                        MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-                        if (lock) {
-                            sysState.keyboardId = localKeyboardId;
-                            sysState.hasLeft = true;   // We got here via handshake, so there's a left neighbor
-                            sysState.hasRight = eastIn;
-                        }
-                    }
-                    uint8_t TX_Message[8] = {'H', (uint8_t)modulePosition, 0, 0, 0, 0, 0, 0};
-                    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-                }
-            }
-        }
-        
+        // Hot-plug connection detection and handshake
+        updateConnectionState(westIn, eastIn);
+
         // ============================================================================
         // Multi-key detection - detect ALL pressed keys (0-11)
         // ============================================================================
@@ -187,100 +300,8 @@ void scanKeysTask(void * pvParameters) {
             }
         }
 
-        // Menu Navigation - joystick controls
-        // Joystick DOWN cycles through modes: Performance -> Scope -> Env -> Menu
-        // Joystick LEFT/RIGHT in menu: change pages
-        // Joystick UP: exit menu (go to Performance)
-        
-        // Read joystick analog
-        int16_t joyX = analogRead(JOYX_PIN);
-        int16_t joyY = analogRead(JOYY_PIN);
-        uint32_t now = millis();
-
-        // Mode cycling: Joystick DOWN moves to next mode
-        static bool joyDownPressed = false;
-        static uint32_t lastModeChange = 0;
-
-        if (joyY > JOY_DOWN_THRESHOLD && !joyDownPressed) {
-            // Joystick just moved down - cycle to next mode
-            if (now - lastModeChange > 300) { // debounce
-                MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-                if (lock) {
-                    // Cycle: Performance(0) -> Scope(1) -> Env(2) -> Menu(3)
-                    uint8_t newMode = (sysState.viewMode + 1) % 4;
-                    sysState.menuMode = (newMode == 3);
-                    sysState.viewMode = newMode;
-                }
-                joyDownPressed = true;
-                lastModeChange = now;
-            }
-        } else if (joyY <= JOY_DOWN_THRESHOLD - 100) {
-            // Released - allow next press
-            joyDownPressed = false;
-        }
-
-        // Joystick UP in menu mode: exit menu to Performance
-        static bool joyUpPressed = false;
-
-        bool inMenu = false;
-        {
-            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-            if (lock) {
-                inMenu = sysState.menuMode;
-            }
-        }
-
-        if (inMenu && joyY < JOY_UP_THRESHOLD && !joyUpPressed) {
-            // Joystick UP in menu - exit to Performance
-            if (now - lastModeChange > 300) {
-                MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-                if (lock) {
-                    sysState.menuMode = false;
-                    sysState.viewMode = 0; // Performance
-                }
-                joyUpPressed = true;
-                lastModeChange = now;
-            }
-        } else if (joyY >= JOY_UP_THRESHOLD + 100) {
-            joyUpPressed = false;
-        }
-
-        // Page navigation within menu mode
-        if (inMenu) {
-            int8_t newXDir = 0;
-
-            if(joyX < JOY_CENTER_X - JOY_THRESHOLD) newXDir = -1;
-            else if(joyX > JOY_CENTER_X + JOY_THRESHOLD) newXDir = +1;
-
-            if(newXDir != 0 && newXDir == xDirection) consecutiveReads++;
-            else consecutiveReads = 0;
-
-            xDirection = newXDir;
-
-            if(consecutiveReads >= 3 && now > navCooldown) {
-                MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-                if (lock) {
-                    // Left / Right changes active page
-                    if(xDirection < 0 && sysState.activePage > 0) {
-                        sysState.activePage = (MenuPage)(sysState.activePage - 1);
-                        navCooldown = now + 200;
-                    }
-                    else if(xDirection > 0 && sysState.activePage < PAGE_COUNT - 1) {
-                        sysState.activePage = (MenuPage)(sysState.activePage + 1);
-                        navCooldown = now + 200;
-                    }
-                }
-                consecutiveReads = 0;
-            }
-        }
-
-        // Knob decoding for all 4 knobs
-        for (int i = 0; i < 4; i++) {
-            int8_t direction = knobs[i].update(knobCurrentStates[i]);
-            if (direction != 0) {
-                uiHandleKnobRotation(i, direction);
-            }
-        }
+        // Joystick navigation
+        handleJoystickNavigation(analogRead(JOYX_PIN), analogRead(JOYY_PIN), millis());
 
         // Update global state
         {
