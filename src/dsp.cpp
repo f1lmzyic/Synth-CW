@@ -16,9 +16,9 @@ void dspInit() {
     localParams.osc2Wave = WAVEFORM_SAWTOOTH; localParams.osc2Detune = 5;
     localParams.mixOsc2 = 30; localParams.subOscMix = 20;
     localParams.filterCutoff = 100; localParams.filterRes = 30;
-    localParams.filterEnvDepth = 50; localParams.envAttack = 5;
-    localParams.envDecay = 30; localParams.envSustain = 80;
-    localParams.envRelease = 20; localParams.modEnvAttack = 10;
+    localParams.filterEnvDepth = 50; localParams.envAttack = 15;
+    localParams.envDecay = 60; localParams.envSustain = 40;
+    localParams.envRelease = 50; localParams.modEnvAttack = 10;
     localParams.modEnvDecay = 40; localParams.lfoRate = 20;
     localParams.masterVol = 6;
     smoothCutoff = localParams.filterCutoff; smoothVol = localParams.masterVol;
@@ -50,20 +50,21 @@ void sampleISR() {
     int32_t combinedVoiceOut = 0, totalEnvCurrent = 0;
     uint8_t activeVoiceCount = 0;
     for (int v = 0; v < POLYPHONY; v++) {
-        if (!voiceActive[v]) continue;
+        volatile VoiceState& voice = voices[v];
+        if (!voice.active) continue;
         activeVoiceCount++;
         // Voice glide
-        if (voiceStep[v] != voiceTargetStep[v]) {
-            int32_t diff = voiceTargetStep[v] - voiceStep[v];
+        if (voice.step != voice.targetStep) {
+            int32_t diff = voice.targetStep - voice.step;
             int32_t step = diff / (1 + localParams.glideTime * 50);
             if (abs(step) < GLIDE_STEP_MIN) step = (diff > 0) ? GLIDE_STEP_MIN : -GLIDE_STEP_MIN;
-            voiceStep[v] += step;
-            if ((step > 0 && voiceStep[v] > voiceTargetStep[v]) ||
-                (step < 0 && voiceStep[v] < voiceTargetStep[v]))
-                voiceStep[v] = voiceTargetStep[v];
+            voice.step += step;
+            if ((step > 0 && voice.step > voice.targetStep) ||
+                (step < 0 && voice.step < voice.targetStep))
+                voice.step = voice.targetStep;
         }
         // Voice pitch with modulations
-        uint32_t osc1Step = voiceStep[v];
+        uint32_t osc1Step = voice.step;
         if (localParams.lfoDepth > 0 && localParams.lfoTarget == 0)
             osc1Step += (osc1Step * ((lfoVal * localParams.lfoDepth) >> 7)) >> 10;
         if (localParams.modEnvTarget == 0)
@@ -78,9 +79,9 @@ void sampleISR() {
         else if (localParams.osc2Octave < 0) osc2Step >>= -localParams.osc2Octave;
         if (localParams.modEnvTarget == 2) osc2Step += (osc2Step * modEnvCurrent) >> 10;
         // Advance phase
-        voicePhase[v] += osc1Step;
+        voice.phase += osc1Step;
         // Mix oscillators, wavefolder, envelope, VCA
-        int32_t voiceMix = mixOscillators(osc1Step, osc2Step, voicePhase[v], localParams, noiseVal);
+        int32_t voiceMix = mixOscillators(osc1Step, osc2Step, voice.phase, localParams, noiseVal);
         if (localParams.wavefold > 0) voiceMix = applyWavefolder(voiceMix, localParams.wavefold);
         uint8_t voiceEnv = processEnvelope(v, localParams);
         voiceMix = (voiceMix * voiceEnv) >> 8;
@@ -88,9 +89,12 @@ void sampleISR() {
     }
     // Release envelopes for inactive voices
     for (int v = 0; v < POLYPHONY; v++) {
-        if (!voiceActive[v] && voiceEnvValue[v] > 0) {
-            voiceEnvValue[v] -= (255 << 8) / (1 + localParams.envRelease * 2);
-            if (voiceEnvValue[v] <= 0) { voiceEnvValue[v] = 0; voiceEnvState[v] = VOICE_ENV_IDLE; }
+        volatile VoiceState& voice = voices[v];
+        if (!voice.active && voice.envValue > 0) {
+            int32_t step = voice.envValue / (8 + ((localParams.envRelease * localParams.envRelease) >> 5));
+            if (step < 1) step = 1;
+            voice.envValue -= step;
+            if (voice.envValue <= 0) { voice.envValue = 0; voice.envState = VOICE_ENV_IDLE; }
         }
     }
     // Scale output

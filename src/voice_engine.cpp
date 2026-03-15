@@ -3,22 +3,12 @@
 #include "constants.h"
 
 // ============================================================================
-// Voice allocation state (internal to voice engine)
+// Voice state - single array of structs (better cache locality)
 // ============================================================================
-static uint8_t voiceAllocIndex = 0;  // Round-robin allocator
+volatile VoiceState voices[POLYPHONY];
 
-// ============================================================================
-// Voice state arrays - exported for ISR access (lock-free by design)
-// Marked volatile since they are shared between ISR and task contexts
-// ============================================================================
-volatile uint32_t voicePhase[POLYPHONY] = {0};
-volatile uint32_t voiceStep[POLYPHONY] = {0};
-volatile uint32_t voiceTargetStep[POLYPHONY] = {0};
-volatile int32_t voiceEnvValue[POLYPHONY] = {0};
-volatile uint16_t voiceKey[POLYPHONY] = {0xFFFF};
-volatile bool voiceActive[POLYPHONY] = {false};
-volatile bool voiceRetrigger[POLYPHONY] = {false};
-volatile uint8_t voiceEnvState[POLYPHONY] = {VOICE_ENV_IDLE};
+// Round-robin allocator index (internal to voice engine)
+static uint8_t voiceAllocIndex = 0;
 
 // Note frequencies - calibrated for 22kHz sample rate
 static const uint32_t baseStepSizes[] = {
@@ -31,15 +21,17 @@ static const uint32_t baseStepSizes[] = {
 // ============================================================================
 
 void voiceEngineInit(void) {
-    // Cast away volatile for memset (safe during init before ISR starts)
-    memset((void*)voicePhase, 0, sizeof(voicePhase));
-    memset((void*)voiceStep, 0, sizeof(voiceStep));
-    memset((void*)voiceTargetStep, 0, sizeof(voiceTargetStep));
-    memset((void*)voiceEnvValue, 0, sizeof(voiceEnvValue));
-    memset((void*)voiceKey, 0xFF, sizeof(voiceKey));  // 0xFFFF marks unused
-    memset((void*)voiceActive, 0, sizeof(voiceActive));
-    memset((void*)voiceRetrigger, 0, sizeof(voiceRetrigger));
-    memset((void*)voiceEnvState, VOICE_ENV_IDLE, sizeof(voiceEnvState));
+    // Initialize each voice to default state (safe during init before ISR starts)
+    for (int v = 0; v < POLYPHONY; v++) {
+        voices[v].phase = 0;
+        voices[v].step = 0;
+        voices[v].targetStep = 0;
+        voices[v].envValue = 0;
+        voices[v].key = 0xFFFF;  // Marks unused
+        voices[v].envState = VOICE_ENV_IDLE;
+        voices[v].active = false;
+        voices[v].retrigger = false;
+    }
     voiceAllocIndex = 0;
 }
 
@@ -54,7 +46,7 @@ static bool isKeyPressed(uint16_t key) {
 // Helper: find voice assigned to key, returns -1 if not found
 static int8_t findVoiceForKey(uint16_t key) {
     for (int v = 0; v < POLYPHONY; v++) {
-        if (voiceActive[v] && voiceKey[v] == key) return v;
+        if (voices[v].active && voices[v].key == key) return v;
     }
     return -1;
 }
@@ -78,13 +70,13 @@ uint32_t voiceEngineGetStepSizeForMidiNote(int note) {
 void voiceEngineUpdateParams(void) {
     // Step 1: Release voices for keys no longer pressed
     for (int v = 0; v < POLYPHONY; v++) {
-        if (voiceActive[v]) {
-            uint16_t key = voiceKey[v];
+        if (voices[v].active) {
+            uint16_t key = voices[v].key;
             if (!isKeyPressed(key)) {
-                voiceActive[v] = false;
-                voiceKey[v] = 0xFFFF;
-                voiceEnvState[v] = VOICE_ENV_RELEASE;
-                voiceRetrigger[v] = false;
+                voices[v].active = false;
+                voices[v].key = 0xFFFF;
+                voices[v].envState = VOICE_ENV_RELEASE;
+                voices[v].retrigger = false;
             }
         }
     }
@@ -99,7 +91,7 @@ void voiceEngineUpdateParams(void) {
         // Find free voice
         int8_t freeVoice = -1;
         for (int v = 0; v < POLYPHONY; v++) {
-            if (!voiceActive[v] && voiceEnvState[v] == VOICE_ENV_IDLE) {
+            if (!voices[v].active && voices[v].envState == VOICE_ENV_IDLE) {
                 freeVoice = v;
                 break;
             }
@@ -109,24 +101,24 @@ void voiceEngineUpdateParams(void) {
         if (freeVoice == -1) {
             freeVoice = voiceAllocIndex;
             voiceAllocIndex = (voiceAllocIndex + 1) % POLYPHONY;
-            voiceEnvState[freeVoice] = VOICE_ENV_RELEASE;
+            voices[freeVoice].envState = VOICE_ENV_RELEASE;
         }
 
         // Allocate voice to key
-        voiceKey[freeVoice] = key;
-        voiceActive[freeVoice] = true;
-        voiceRetrigger[freeVoice] = true;
-        voiceEnvValue[freeVoice] = 0;
-        voiceEnvState[freeVoice] = VOICE_ENV_ATTACK;
+        voices[freeVoice].key = key;
+        voices[freeVoice].active = true;
+        voices[freeVoice].retrigger = true;
+        voices[freeVoice].envValue = 0;
+        voices[freeVoice].envState = VOICE_ENV_ATTACK;
 
         // Calculate step size
         uint16_t keyboardId = key / KEYS_PER_KEYBOARD;
         uint8_t keyInKeyboard = key % KEYS_PER_KEYBOARD;
         int midiNote = (4 + keyboardId) * 12 + keyInKeyboard;
-        voiceTargetStep[freeVoice] = voiceEngineGetStepSizeForMidiNote(midiNote);
+        voices[freeVoice].targetStep = voiceEngineGetStepSizeForMidiNote(midiNote);
 
         if (sysState.params.glideTime == 0) {
-            voiceStep[freeVoice] = voiceTargetStep[freeVoice];
+            voices[freeVoice].step = voices[freeVoice].targetStep;
         }
     }
 }
@@ -134,7 +126,7 @@ void voiceEngineUpdateParams(void) {
 uint8_t voiceEngineGetActiveVoiceCount(void) {
     uint8_t count = 0;
     for (int v = 0; v < POLYPHONY; v++) {
-        if (voiceActive[v]) count++;
+        if (voices[v].active) count++;
     }
     return count;
 }

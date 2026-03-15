@@ -3,10 +3,9 @@
 #include "globals.h"
 #include "voice_engine.h"
 
-// Note: Voice state arrays (voiceKey, voiceActive, voiceRetrigger, voiceEnvState, voiceEnvValue)
-//       are defined in voice_engine.cpp to avoid duplicate definitions
-
-// Envelope state variables (owned by envelopes module)
+// ============================================================================
+// Modulation envelope state (owned by envelopes module)
+// ============================================================================
 EnvState modEnvState = ENV_IDLE;
 int32_t modEnvValue = 0;
 
@@ -17,60 +16,76 @@ void envelopeInit() {
 }
 
 void triggerEnvelopeRelease(uint8_t voiceIndex) {
-    if (voiceIndex < POLYPHONY)
-        voiceEnvState[voiceIndex] = ENV_RELEASE;
+    if (voiceIndex < POLYPHONY) {
+        voices[voiceIndex].envState = ENV_RELEASE;
+    }
 }
 
 uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams& params) {
     if (voiceIndex >= POLYPHONY) return 0;
-    
-    if (voiceRetrigger[voiceIndex]) {
-        voiceEnvValue[voiceIndex] = 1;
-        voiceEnvState[voiceIndex] = ENV_ATTACK;
-        voiceRetrigger[voiceIndex] = false;
+
+    // Access voice state through consolidated struct
+    volatile VoiceState& voice = voices[voiceIndex];
+
+    if (voice.retrigger) {
+        voice.envValue = 1;
+        voice.envState = ENV_ATTACK;
+        voice.retrigger = false;
     }
-    if (voiceEnvValue[voiceIndex] == 0 && voiceActive[voiceIndex]) {
-        voiceEnvValue[voiceIndex] = 1;
-        voiceEnvState[voiceIndex] = ENV_ATTACK;
+    if (voice.envValue == 0 && voice.active) {
+        voice.envValue = 1;
+        voice.envState = ENV_ATTACK;
     }
-    
+
     int32_t step, target;
-    switch (voiceEnvState[voiceIndex]) {
+    // Time scaling: parameter 0-127 maps to ~1ms to ~2s
+    // Using quadratic scaling for more musical feel
+    switch (voice.envState) {
         case ENV_ATTACK:
-            step = (255 << 8) / (1 + params.envAttack * 2);
-            voiceEnvValue[voiceIndex] += step;
-            if (voiceEnvValue[voiceIndex] >= (255 << 8)) {
-                voiceEnvValue[voiceIndex] = 255 << 8;
-                voiceEnvState[voiceIndex] = ENV_SUSTAIN;
-                target = params.envSustain << 9;
-                step = (255 << 8) / (1 + params.envDecay * 2);
-                voiceEnvValue[voiceIndex] -= step;
-                if (voiceEnvValue[voiceIndex] < target)
-                    voiceEnvValue[voiceIndex] = target;
+            // Attack: fast initial rise
+            // Higher param = slower attack (more samples to reach peak)
+            step = (255 << 8) / (1 + ((params.envAttack * params.envAttack) >> 4));
+            voice.envValue += step;
+            if (voice.envValue >= (255 << 8)) {
+                voice.envValue = 255 << 8;
+                voice.envState = ENV_DECAY;
             }
             break;
         case ENV_DECAY:
-        case ENV_SUSTAIN:
-            target = params.envSustain << 9;
-            if (voiceEnvValue[voiceIndex] > target) {
-                step = (255 << 8) / (1 + params.envDecay * 2);
-                voiceEnvValue[voiceIndex] -= step;
-                if (voiceEnvValue[voiceIndex] < target)
-                    voiceEnvValue[voiceIndex] = target;
+            // Decay: exponential-like fall to sustain level (piano-like)
+            target = (params.envSustain * 255) << 1; // Sustain 0-127 -> 0-32385
+            if (voice.envValue > target) {
+                // Exponential decay: step proportional to current value
+                step = voice.envValue / (8 + ((params.envDecay * params.envDecay) >> 5));
+                if (step < 1) step = 1;
+                voice.envValue -= step;
+                if (voice.envValue <= target) {
+                    voice.envValue = target;
+                    voice.envState = ENV_SUSTAIN;
+                }
+            } else {
+                voice.envState = ENV_SUSTAIN;
             }
             break;
+        case ENV_SUSTAIN:
+            // Hold at sustain level while key is held
+            target = (params.envSustain * 255) << 1;
+            voice.envValue = target;
+            break;
         case ENV_RELEASE:
-            step = (255 << 8) / (1 + params.envRelease * 2);
-            voiceEnvValue[voiceIndex] -= step;
-            if (voiceEnvValue[voiceIndex] <= 0) {
-                voiceEnvValue[voiceIndex] = 0;
-                voiceEnvState[voiceIndex] = ENV_IDLE;
+            // Release: exponential decay to zero (natural piano tail)
+            step = voice.envValue / (8 + ((params.envRelease * params.envRelease) >> 5));
+            if (step < 1) step = 1;
+            voice.envValue -= step;
+            if (voice.envValue <= 0) {
+                voice.envValue = 0;
+                voice.envState = ENV_IDLE;
             }
             break;
         default:
-            voiceEnvValue[voiceIndex] = 0;
+            voice.envValue = 0;
     }
-    return voiceEnvValue[voiceIndex] >> 8;
+    return voice.envValue >> 8;
 }
 
 int32_t processModEnvelope(const SynthParams& params) {
