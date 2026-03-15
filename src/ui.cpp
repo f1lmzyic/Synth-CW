@@ -27,12 +27,19 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
         sysState.highlightEndTime = millis() + 500;
 
         if (!sysState.menuMode) {
-                // If not in menu mode, knob 0 controls master volume
+                // Performance mode knob assignments
                 if (knobIndex == 0) {
+                    // Knob 0: Master volume (0-8)
                     int16_t vol = sysState.params.masterVol + direction;
                     if (vol < 0) vol = 0;
                     if (vol > 8) vol = 8;
                     sysState.params.masterVol = vol;
+                } else if (knobIndex == 1) {
+                    // Knob 3: Octave offset (-2 to +2)
+                    int16_t oct = sysState.octaveOffset + direction;
+                    if (oct < -2) oct = -2;
+                    if (oct > 2) oct = 2;
+                    sysState.octaveOffset = oct;
                 }
             } else {
                 // Change parameter based on knob index and active page
@@ -545,7 +552,7 @@ void displayUpdateTask(void * pvParameters) {
                 uint8_t numKeys = localState.pressedKeyCount;
                 if (numKeys == 0) {
                     u8g2->setFont(u8g2_font_ncenB08_tr);
-                    u8g2->setCursor(0, 20);
+                    u8g2->setCursor(0, 10);
                     u8g2->print("-");
                 } else {
                     // Build string of all pressed notes
@@ -570,21 +577,18 @@ void displayUpdateTask(void * pvParameters) {
                     } else {
                         u8g2->setFont(u8g2_font_4x6_tr);
                     }
-                    u8g2->setCursor(0, 20);
+                    u8g2->setCursor(0, 10);
                     u8g2->print(noteStr);
                 }
 
                 u8g2->setFont(u8g2_font_ncenB08_tr);
-                u8g2->setCursor(0, 31);
+                u8g2->setCursor(0, 20);
                 u8g2->print("VOL: ");
                 u8g2->print(localState.params.masterVol);
-                
-                // Print CAN RX_Message
-                u8g2->setFont(u8g2_font_5x7_tr);
-                u8g2->setCursor(66, 30);
-                u8g2->print((char) localState.RX_Message[0]);
-                u8g2->print(localState.RX_Message[1]);
-                u8g2->print(localState.RX_Message[2]);
+                u8g2->setCursor(0, 30);
+                u8g2->print("OCT: ");
+                // Display octave as C2-C6 (offset -2 to +2 maps to octave 2-6)
+                u8g2->print(4 + localState.octaveOffset);
 
                 // 2. Right Side: Waveform Graph
                 const uint8_t graphStartX = 45;

@@ -158,6 +158,7 @@ struct SystemState {
     uint16_t pressedKeys[MAX_PRESSED_KEYS];          // Array of pressed keys (0xFFFF = unused)
     uint8_t pressedKeyCount;                         // Number of currently pressed keys
     volatile uint8_t keyboardId;                     // This keyboard's ID (0, 1, 2, ...)
+    int8_t octaveOffset;                             // Octave offset (-2 to +2) for this module
 
     // Patch management
     uint8_t currentPatchSlot;    // Currently loaded patch (0-15)

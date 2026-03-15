@@ -173,6 +173,7 @@ void setup() {
     sysState.viewMode = 0; // Default to performance view
     sysState.lastHandshakePos = -1;
     sysState.keyboardId = 0; // Default keyboard ID
+    sysState.octaveOffset = 0; // Default octave (middle C = C4)
 
     // Multi-keyboard: assume standalone until handshake determines otherwise
     sysState.hasLeft = false;

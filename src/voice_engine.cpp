@@ -111,10 +111,10 @@ void voiceEngineUpdateParams(void) {
         voices[freeVoice].envValue = 0;
         voices[freeVoice].envState = VOICE_ENV_ATTACK;
 
-        // Calculate step size
+        // Calculate step size (apply octave offset from UI)
         uint16_t keyboardId = key / KEYS_PER_KEYBOARD;
         uint8_t keyInKeyboard = key % KEYS_PER_KEYBOARD;
-        int midiNote = (4 + keyboardId) * 12 + keyInKeyboard;
+        int midiNote = (4 + keyboardId + sysState.octaveOffset) * 12 + keyInKeyboard;
         voices[freeVoice].targetStep = voiceEngineGetStepSizeForMidiNote(midiNote);
 
         if (sysState.params.glideTime == 0) {
