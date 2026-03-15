@@ -118,26 +118,18 @@ void scanKeysTask(void * pvParameters) {
 
         // Handshaking Logic
         if (modulePosition == -1 && millis() > 1000) {
-            if (!westIn) { 
+            if (!westIn) {
                 // Leftmost module OR we detected a neighbor turning off their east output
                 if (sysState.lastHandshakePos == -1) {
                     // First module (leftmost)
                     modulePosition = 0;
                     localKeyboardId = 0;
                     eastOut = false; // Tell next module to the East
-                    if (!eastIn) {
-                        // Standalone (no other keyboards)
-                        if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                            sysState.currentOctave = 5;
+                    {
+                        MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+                        if (lock) {
+                            sysState.currentOctave = eastIn ? 4 : 5;
                             sysState.keyboardId = 0;
-                            xSemaphoreGive(sysState.mutex);
-                        }
-                    } else {
-                        // Connected to more keyboards on the right
-                        if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                            sysState.currentOctave = 4;
-                            sysState.keyboardId = 0;
-                            xSemaphoreGive(sysState.mutex);
                         }
                     }
                     uint8_t TX_Message[8] = {'H', 0, 0, 0, 0, 0, 0, 0};
@@ -147,11 +139,13 @@ void scanKeysTask(void * pvParameters) {
                     modulePosition = sysState.lastHandshakePos + 1;
                     localKeyboardId = modulePosition;
                     eastOut = false; // Tell next module to the East
-                    if (sysState.mutex != NULL && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        // Octave decreases as we go right: keyboard 0=4, keyboard 1=3, keyboard 2=2
-                        sysState.currentOctave = 4 - modulePosition;
-                        sysState.keyboardId = localKeyboardId;
-                        xSemaphoreGive(sysState.mutex);
+                    {
+                        MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+                        if (lock) {
+                            // Octave decreases as we go right: keyboard 0=4, keyboard 1=3, keyboard 2=2
+                            sysState.currentOctave = 4 - modulePosition;
+                            sysState.keyboardId = localKeyboardId;
+                        }
                     }
                     uint8_t TX_Message[8] = {'H', (uint8_t)modulePosition, 0, 0, 0, 0, 0, 0};
                     xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
@@ -213,21 +207,12 @@ void scanKeysTask(void * pvParameters) {
         if (joyY > JOY_DOWN_THRESHOLD && !joyDownPressed) {
             // Joystick just moved down - cycle to next mode
             if (now - lastModeChange > 300) { // debounce
-                if(sysState.mutex != NULL){
-                    if(xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE){
-                        // Cycle: Performance(0) -> Scope(1) -> Env(2) -> Menu(3)
-                        uint8_t newMode = (sysState.viewMode + 1) % 4;
-                        
-                        // If entering menu mode, set menuMode = true
-                        if (newMode == 3) {
-                            sysState.menuMode = true;
-                        } else {
-                            sysState.menuMode = false;
-                        }
-                        
-                        sysState.viewMode = newMode;
-                        xSemaphoreGive(sysState.mutex);
-                    }
+                MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+                if (lock) {
+                    // Cycle: Performance(0) -> Scope(1) -> Env(2) -> Menu(3)
+                    uint8_t newMode = (sysState.viewMode + 1) % 4;
+                    sysState.menuMode = (newMode == 3);
+                    sysState.viewMode = newMode;
                 }
                 joyDownPressed = true;
                 lastModeChange = now;
@@ -236,27 +221,25 @@ void scanKeysTask(void * pvParameters) {
             // Released - allow next press
             joyDownPressed = false;
         }
-        
+
         // Joystick UP in menu mode: exit menu to Performance
         static bool joyUpPressed = false;
-        
+
         bool inMenu = false;
-        if (sysState.mutex != NULL) {
-            if (xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        {
+            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+            if (lock) {
                 inMenu = sysState.menuMode;
-                xSemaphoreGive(sysState.mutex);
             }
         }
-        
+
         if (inMenu && joyY < JOY_UP_THRESHOLD && !joyUpPressed) {
             // Joystick UP in menu - exit to Performance
             if (now - lastModeChange > 300) {
-                if(sysState.mutex != NULL){
-                    if(xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE){
-                        sysState.menuMode = false;
-                        sysState.viewMode = 0; // Performance
-                        xSemaphoreGive(sysState.mutex);
-                    }
+                MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+                if (lock) {
+                    sysState.menuMode = false;
+                    sysState.viewMode = 0; // Performance
                 }
                 joyUpPressed = true;
                 lastModeChange = now;
@@ -268,30 +251,26 @@ void scanKeysTask(void * pvParameters) {
         // Page navigation within menu mode
         if (inMenu) {
             int8_t newXDir = 0;
-            
+
             if(joyX < JOY_CENTER_X - JOY_THRESHOLD) newXDir = -1;
             else if(joyX > JOY_CENTER_X + JOY_THRESHOLD) newXDir = +1;
-            
+
             if(newXDir != 0 && newXDir == xDirection) consecutiveReads++;
             else consecutiveReads = 0;
-            
-            xDirection = newXDir;
-            
-            if(consecutiveReads >= 3 && now > navCooldown) {
-                if (sysState.mutex != NULL) {
-                    if (xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                        
-                        // Left / Right changes active page
-                        if(xDirection < 0 && sysState.activePage > 0) {
-                            sysState.activePage = (MenuPage)(sysState.activePage - 1);
-                            navCooldown = now + 200;
-                        } 
-                        else if(xDirection > 0 && sysState.activePage < PAGE_COUNT - 1) {
-                            sysState.activePage = (MenuPage)(sysState.activePage + 1);
-                            navCooldown = now + 200;
-                        }
 
-                        xSemaphoreGive(sysState.mutex);
+            xDirection = newXDir;
+
+            if(consecutiveReads >= 3 && now > navCooldown) {
+                MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+                if (lock) {
+                    // Left / Right changes active page
+                    if(xDirection < 0 && sysState.activePage > 0) {
+                        sysState.activePage = (MenuPage)(sysState.activePage - 1);
+                        navCooldown = now + 200;
+                    }
+                    else if(xDirection > 0 && sysState.activePage < PAGE_COUNT - 1) {
+                        sysState.activePage = (MenuPage)(sysState.activePage + 1);
+                        navCooldown = now + 200;
                     }
                 }
                 consecutiveReads = 0;
@@ -319,14 +298,14 @@ void scanKeysTask(void * pvParameters) {
         }
 
         // Update global state
-        if(sysState.mutex != NULL){
-            if(xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE){
+        {
+            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+            if (lock) {
                 sysState.inputs = localInputs;
                 sysState.pressedKey = pressedKey;
-                xSemaphoreGive(sysState.mutex);
             }
         }
-        
+
         dspUpdateParams();
     }
 }

@@ -5,5 +5,5 @@
 // Delegates to the canonical getWaveSample in oscillators.h
 int32_t uiGetWaveSample(WaveformType wave, uint8_t phaseMSB) {
     // Convert 8-bit phase to 32-bit for getWaveSample
-    return getWaveSample(wave, (uint32_t)phaseMSB << 24);
+    return getWaveSample(wave, static_cast<uint32_t>(phaseMSB) << 24);
 }

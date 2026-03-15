@@ -20,14 +20,13 @@ void uiInit() {
 
 // Modify parameter value
 void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
-    if (sysState.mutex != NULL) {
-        if (xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-            
-            // Highlight the knob being turned (persists 500ms)
-            sysState.highlightedKnob = knobIndex;
-            sysState.highlightEndTime = millis() + 500;
-            
-            if (!sysState.menuMode) {
+    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+    if (lock) {
+        // Highlight the knob being turned (persists 500ms)
+        sysState.highlightedKnob = knobIndex;
+        sysState.highlightEndTime = millis() + 500;
+
+        if (!sysState.menuMode) {
                 // If not in menu mode, knob 0 controls master volume
                 if (knobIndex == 0) {
                     int16_t vol = sysState.params.masterVol + direction;
@@ -260,8 +259,6 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
                         break;
                 }
             }
-            xSemaphoreGive(sysState.mutex);
-        }
     }
 }
 
@@ -275,10 +272,10 @@ void displayUpdateTask(void * pvParameters) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
         SystemState localState;
-        if(sysState.mutex != NULL){
-            if(xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE){
+        {
+            MutexGuard lock(sysState.mutex);
+            if (lock) {
                 localState = sysState;
-                xSemaphoreGive(sysState.mutex);
             }
         }
 

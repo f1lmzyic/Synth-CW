@@ -3,6 +3,42 @@
 #include <bitset>
 #include <STM32FreeRTOS.h>
 
+class MutexGuard {
+public:
+    explicit MutexGuard(SemaphoreHandle_t mutex)
+        : m_mutex(mutex), m_locked(false) {
+        if (m_mutex != nullptr) {
+            m_locked = (xSemaphoreTake(m_mutex, portMAX_DELAY) == pdTRUE);
+        }
+    }
+
+    MutexGuard(SemaphoreHandle_t mutex, TickType_t timeout)
+        : m_mutex(mutex), m_locked(false) {
+        if (m_mutex != nullptr) {
+            m_locked = (xSemaphoreTake(m_mutex, timeout) == pdTRUE);
+        }
+    }
+
+    ~MutexGuard() {
+        if (m_locked && m_mutex != nullptr) {
+            xSemaphoreGive(m_mutex);
+        }
+    }
+
+    bool isLocked() const { return m_locked; }
+
+    explicit operator bool() const { return m_locked; }
+
+    MutexGuard(const MutexGuard&) = delete;
+    MutexGuard& operator=(const MutexGuard&) = delete;
+    MutexGuard(MutexGuard&&) = delete;
+    MutexGuard& operator=(MutexGuard&&) = delete;
+
+private:
+    SemaphoreHandle_t m_mutex;
+    bool m_locked;
+};
+
 // ============================================================================
 // Polyphony configuration
 // ============================================================================

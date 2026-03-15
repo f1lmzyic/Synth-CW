@@ -89,28 +89,23 @@ bool patchIsValid(uint8_t slot) {
 // Load a patch from flash
 bool patchLoad(uint8_t slot) {
     if (slot >= PATCH_SLOTS) return false;
-    if (xSemaphoreTake(patchMutex, portMAX_DELAY) != pdTRUE) return false;
-    
-    bool success = false;
-    
-    if (patchIsValid(slot)) {
-        // Read patch data from flash
-        Patch* patch = (Patch*)getPatchAddress(slot);
-        
-        // Copy params to current state (with mutex protection)
-        extern SystemState sysState;
-        if (sysState.mutex != NULL) {
-            if (xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE) {
-                memcpy(&sysState.params, &patch->params, sizeof(SynthParams));
-                xSemaphoreGive(sysState.mutex);
-                success = true;
-                currentPatchSlot = slot;
-            }
-        }
-    }
-    
-    xSemaphoreGive(patchMutex);
-    return success;
+
+    MutexGuard patchLock(patchMutex);
+    if (!patchLock) return false;
+
+    if (!patchIsValid(slot)) return false;
+
+    Patch* patch = (Patch*)getPatchAddress(slot);
+
+    SynthParams localParams;
+    memcpy(&localParams, &patch->params, sizeof(SynthParams));
+
+    MutexGuard sysLock(sysState.mutex);
+    if (!sysLock) return false;
+
+    sysState.params = localParams;
+    currentPatchSlot = slot;
+    return true;
 }
 
 // Wait for flash to be ready
@@ -130,87 +125,76 @@ static void waitForFlashReady() {
 // Save current params to flash
 bool patchSave(uint8_t slot, const char* name) {
     if (slot >= PATCH_SLOTS) return false;
-    if (xSemaphoreTake(patchMutex, portMAX_DELAY) != pdTRUE) return false;
-    
-    bool success = false;
-    
-    // Prepare patch data
+
     Patch patch;
     memset(&patch, 0, sizeof(Patch));
-    
-    // Fill metadata
+
     patch.metadata.magic = PATCH_MAGIC;
     patch.metadata.version = PATCH_VERSION;
     patch.metadata.slot = slot;
-    
+
     // Set patch name
     if (name != nullptr) {
         strncpy((char*)patch.metadata.name, name, 14);
     } else {
         memcpy(patch.metadata.name, defaultPatchName, 14);
     }
-    
-    // Copy current params
-    extern SystemState sysState;
-    if (sysState.mutex != NULL) {
-        if (xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE) {
-            memcpy(&patch.params, &sysState.params, sizeof(SynthParams));
-            xSemaphoreGive(sysState.mutex);
-        } else {
-            xSemaphoreGive(patchMutex);
-            return false;
-        }
+
+    {
+        MutexGuard sysLock(sysState.mutex);
+        if (!sysLock) return false;
+        memcpy(&patch.params, &sysState.params, sizeof(SynthParams));
     }
     
     // Calculate CRC for integrity (store in reserved field)
     uint32_t crc = calculateCRC32((uint8_t*)&patch.params, sizeof(SynthParams));
     patch.metadata.reserved = (uint8_t)(crc & 0xFF);
-    
+
+    MutexGuard patchLock(patchMutex);
+    if (!patchLock) return false;
+
     // Flash programming sequence
     uint32_t address = getPatchAddress(slot);
     uint32_t dataSize = PATCH_DATA_SIZE;
-    
+    bool success = false;
+
     // Disable interrupts during flash operations
     __disable_irq();
-    
+
     // Unlock flash
     HAL_FLASH_Unlock();
-    
+
     // Clear flash status flags
-    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR | 
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
                           FLASH_FLAG_PGAERR | FLASH_FLAG_SIZERR | FLASH_FLAG_PGSERR);
-    
+
     // Erase page(s) containing this patch
     // STM32L4 requires page erasure before programming
     FLASH_EraseInitTypeDef eraseInit;
     eraseInit.TypeErase = FLASH_TYPEERASE_PAGES;
     eraseInit.Page = ((address - 0x08000000) / FLASH_PAGE_SIZE);
     eraseInit.NbPages = 1;
-    
+
     uint32_t pageError;
     if (HAL_FLASHEx_Erase(&eraseInit, &pageError) == HAL_OK) {
         // Program flash byte by byte (or word by word)
         // Flash must be programmed from 0 to 1, never 1 to 0 (requires erase)
         uint8_t* data = (uint8_t*)&patch;
-        
+        success = true;
+
         for (uint32_t i = 0; i < dataSize; i += 8) {
             uint64_t word = *(uint64_t*)(data + i);
-            if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, address + i, word) == HAL_OK) {
-                success = true;
-            } else {
+            if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, address + i, word) != HAL_OK) {
                 success = false;
                 break;
             }
         }
     }
-    
-    // Lock flash
+
     HAL_FLASH_Lock();
-    
-    // Re-enable interrupts
+
     __enable_irq();
-    
-    xSemaphoreGive(patchMutex);
+
     return success;
 }
 
@@ -245,24 +229,23 @@ void patchSetCurrentSlot(uint8_t slot) {
 
 // Erase all patches
 void patchEraseAll() {
-    if (xSemaphoreTake(patchMutex, portMAX_DELAY) != pdTRUE) return;
-    
+    MutexGuard patchLock(patchMutex);
+    if (!patchLock) return;
+
     __disable_irq();
     HAL_FLASH_Unlock();
-    
+
     // Erase all patch pages
     FLASH_EraseInitTypeDef eraseInit;
     eraseInit.TypeErase = FLASH_TYPEERASE_PAGES;
     eraseInit.Page = ((getPatchAddress(0) - 0x08000000) / FLASH_PAGE_SIZE);
     eraseInit.NbPages = (TOTAL_PATCH_DATA_SIZE / FLASH_PAGE_SIZE) + 1;
-    
+
     uint32_t pageError;
     HAL_FLASHEx_Erase(&eraseInit, &pageError);
-    
+
     HAL_FLASH_Lock();
     __enable_irq();
-    
-    xSemaphoreGive(patchMutex);
 }
 
 // Get number of valid patches
@@ -278,61 +261,58 @@ uint8_t patchCountValid() {
 
 // Load default patch
 void patchLoadDefault() {
-    extern SystemState sysState;
-    if (sysState.mutex != NULL) {
-        if (xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE) {
-            // Reset to default parameters (from dspInit)
-            sysState.params.osc1WaveMorph = 0;
-            sysState.params.osc2Wave = WAVEFORM_SQUARE;
-            sysState.params.osc2Detune = 0;
-            sysState.params.osc2Octave = -1;
-            sysState.params.mixOsc2 = 50;
-            
-            sysState.params.subOscMix = 0;
-            sysState.params.noiseMix = 0;
-            sysState.params.ringModMix = 0;
-            
-            sysState.params.filterCutoff = 127;
-            sysState.params.filterRes = 0;
-            sysState.params.filterEnvDepth = 0;
-            sysState.params.filterType = 0;
-            sysState.params.filterModel = 0;
-            sysState.params.filterDrive = 0;
-            sysState.params.wavefold = 0;
-            
-            sysState.params.oscSync = false;
-            
-            sysState.params.envAttack = 10;
-            sysState.params.envDecay = 40;
-            sysState.params.envSustain = 64;
-            sysState.params.envRelease = 40;
-            
-            sysState.params.modEnvAttack = 10;
-            sysState.params.modEnvDecay = 40;
-            sysState.params.modEnvAmount = 0;
-            sysState.params.modEnvTarget = 0;
-            
-            sysState.params.lfoRate = 10;
-            sysState.params.lfoDepth = 0;
-            sysState.params.lfoTarget = 0;
-            sysState.params.shDepth = 0;
-            sysState.params.shTarget = 0;
-            
-            sysState.params.glideTime = 0;
-            sysState.params.delayTime = 0;
-            sysState.params.delayFeedback = 0;
-            sysState.params.delayMix = 0;
-            
-            sysState.params.chorusRate = 0;
-            sysState.params.chorusDepth = 0;
-            sysState.params.chorusMix = 0;
-            
-            sysState.params.bitcrushDepth = 0;
-            sysState.params.decimatorRate = 0;
-            
-            sysState.params.masterVol = 4;
-            xSemaphoreGive(sysState.mutex);
-        }
-    }
+    MutexGuard lock(sysState.mutex);
+    if (!lock) return;
+
+    // Reset to default parameters (from dspInit)
+    sysState.params.osc1WaveMorph = 0;
+    sysState.params.osc2Wave = WAVEFORM_SQUARE;
+    sysState.params.osc2Detune = 0;
+    sysState.params.osc2Octave = -1;
+    sysState.params.mixOsc2 = 50;
+
+    sysState.params.subOscMix = 0;
+    sysState.params.noiseMix = 0;
+    sysState.params.ringModMix = 0;
+
+    sysState.params.filterCutoff = 127;
+    sysState.params.filterRes = 0;
+    sysState.params.filterEnvDepth = 0;
+    sysState.params.filterType = 0;
+    sysState.params.filterModel = 0;
+    sysState.params.filterDrive = 0;
+    sysState.params.wavefold = 0;
+
+    sysState.params.oscSync = false;
+
+    sysState.params.envAttack = 10;
+    sysState.params.envDecay = 40;
+    sysState.params.envSustain = 64;
+    sysState.params.envRelease = 40;
+
+    sysState.params.modEnvAttack = 10;
+    sysState.params.modEnvDecay = 40;
+    sysState.params.modEnvAmount = 0;
+    sysState.params.modEnvTarget = 0;
+
+    sysState.params.lfoRate = 10;
+    sysState.params.lfoDepth = 0;
+    sysState.params.lfoTarget = 0;
+    sysState.params.shDepth = 0;
+    sysState.params.shTarget = 0;
+
+    sysState.params.glideTime = 0;
+    sysState.params.delayTime = 0;
+    sysState.params.delayFeedback = 0;
+    sysState.params.delayMix = 0;
+
+    sysState.params.chorusRate = 0;
+    sysState.params.chorusDepth = 0;
+    sysState.params.chorusMix = 0;
+
+    sysState.params.bitcrushDepth = 0;
+    sysState.params.decimatorRate = 0;
+
+    sysState.params.masterVol = 4;
     currentPatchSlot = 0;
 }

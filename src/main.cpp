@@ -42,44 +42,42 @@ void CAN_TX_ISR() {
     while (true) {
         xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
 #if (NODE_MODE != MODE_SENDER_ONLY)
-        if (sysState.mutex != nullptr) {
-            if (xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE) {
-                uint8_t msgType = RX_Message[0];
-                uint8_t octave = RX_Message[1];
-                uint8_t keyIndex = RX_Message[2];
-                uint8_t keyboardId = RX_Message[3]; // New: keyboard ID
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            uint8_t msgType = RX_Message[0];
+            uint8_t octave = RX_Message[1];
+            uint8_t keyIndex = RX_Message[2];
+            uint8_t keyboardId = RX_Message[3]; // New: keyboard ID
 
-                // Calculate global key number (0-35 for 3 keyboards)
-                uint8_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
+            // Calculate global key number (0-35 for 3 keyboards)
+            uint8_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
 
-                for (int i = 0; i < 8; i++) sysState.RX_Message[i] = RX_Message[i];
+            for (int i = 0; i < 8; i++) sysState.RX_Message[i] = RX_Message[i];
 
-                if (msgType == 'P') {
-                    // Key press - add to pressed keys
-                    if (!sysState.pressedKeys[globalKey]) {
-                        sysState.pressedKeys[globalKey] = 1;
-                        sysState.numPressedKeys++;
-                    }
-                    // Legacy support - first key becomes pressedKey
-                    if (sysState.pressedKey == -1) {
-                        sysState.pressedKey = octave * 12 + keyIndex;
-                    }
-                } else if (msgType == 'R') {
-                    // Key release - remove from pressed keys
-                    if (sysState.pressedKeys[globalKey]) {
-                        sysState.pressedKeys[globalKey] = 0;
-                        if (sysState.numPressedKeys > 0) sysState.numPressedKeys--;
-                    }
-                    // Legacy support - clear pressedKey if it's this key
-                    int legacyKey = octave * 12 + keyIndex;
-                    if (sysState.pressedKey == legacyKey) {
-                        sysState.pressedKey = -1; // Will be updated by voice allocation
-                    }
-                } else if (msgType == 'H') {
-                    sysState.lastHandshakePos = RX_Message[1];
-                    sysState.keyboardId = RX_Message[1];
+            if (msgType == 'P') {
+                // Key press - add to pressed keys
+                if (!sysState.pressedKeys[globalKey]) {
+                    sysState.pressedKeys[globalKey] = 1;
+                    sysState.numPressedKeys++;
                 }
-                xSemaphoreGive(sysState.mutex);
+                // Legacy support - first key becomes pressedKey
+                if (sysState.pressedKey == -1) {
+                    sysState.pressedKey = octave * 12 + keyIndex;
+                }
+            } else if (msgType == 'R') {
+                // Key release - remove from pressed keys
+                if (sysState.pressedKeys[globalKey]) {
+                    sysState.pressedKeys[globalKey] = 0;
+                    if (sysState.numPressedKeys > 0) sysState.numPressedKeys--;
+                }
+                // Legacy support - clear pressedKey if it's this key
+                int legacyKey = octave * 12 + keyIndex;
+                if (sysState.pressedKey == legacyKey) {
+                    sysState.pressedKey = -1; // Will be updated by voice allocation
+                }
+            } else if (msgType == 'H') {
+                sysState.lastHandshakePos = RX_Message[1];
+                sysState.keyboardId = RX_Message[1];
             }
         }
 #endif

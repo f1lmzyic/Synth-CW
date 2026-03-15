@@ -22,16 +22,20 @@ void dspInit() {
     localParams.modEnvDecay = 40; localParams.lfoRate = 20;
     localParams.masterVol = 6;
     smoothCutoff = localParams.filterCutoff; smoothVol = localParams.masterVol;
-    if (sysState.mutex && xSemaphoreTake(sysState.mutex, portMAX_DELAY) == pdTRUE) {
-        sysState.params = localParams; xSemaphoreGive(sysState.mutex);
+
+    MutexGuard lock(sysState.mutex);
+    if (lock) {
+        sysState.params = localParams;
     }
 }
 
 void dspUpdateParams() {
-    if (sysState.mutex && xSemaphoreTake(sysState.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-        localParams = sysState.params; voiceEngineUpdateParams();
-        smoothCutoff = localParams.filterCutoff; smoothVol = localParams.masterVol;
-        xSemaphoreGive(sysState.mutex);
+    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+    if (lock) {
+        localParams = sysState.params;
+        voiceEngineUpdateParams();
+        smoothCutoff = localParams.filterCutoff;
+        smoothVol = localParams.masterVol;
     }
 }
 
