@@ -1,109 +1,416 @@
-# ES Monosynth Pro
+# Embedded Systems Coursework 2 - Real-Time Music Synthesiser
 
-This project transforms a basic STM32L432KC + FreeRTOS synthesizer skeleton into a feature-rich, dual-oscillator subtractive Monosynth. The architecture is modularized into discrete embedded subsystems (Hardware, DSP, UI) to provide professional-grade sound and stability.
+## Table of Contents
+1. [Project Overview](#project-overview)
+2. [Core Functional Requirements](#core-functional-requirements)
+3. [System Architecture](#system-architecture)
+4. [Task Decomposition](#task-decomposition)
+5. [Real-Time Scheduling Strategy](#real-time-scheduling-strategy)
+6. [Shared Data and Synchronisation](#shared-data-and-synchronisation)
+7. [Advanced Features](#advanced-features)
+8. [Why the Arpeggiator + Automation Combination Was Chosen](#why-the-arpeggiator--automation-combination-was-chosen)
+9. [User Interface and Control Mapping](#user-interface-and-control-mapping)
+10. [Source File Structure](#source-file-structure)
+11. [Execution Time Measurement](#execution-time-measurement)
+12. [CPU Utilisation and Rate Monotonic Analysis](#cpu-utilisation-and-rate-monotonic-analysis)
+13. [Blocking and Deadlock Analysis](#blocking-and-deadlock-analysis)
+14. [Build and Flash Instructions](#build-and-flash-instructions)
 
-## Features
+---
 
-Inspired by classic analog and digital synthesizers like the Moog Ladder, Korg MS-20, Roland SH-101, and ARP Odyssey, the DSP engine features:
+## Project Overview
 
-### 1. Sound Generation (Oscillators & Noise)
-*   **Dual Primary VCOs**:
-    *   **OSC 1**: Features continuous **Waveform Morphing** (Sawtooth → Square → Triangle → Sine).
-    *   **OSC 2**: Standard waveforms with adjustable **Detune** (-50 to +50 cents), **Octave Shift** (-2 to +2), and **Hard Sync** (OSC 1 phase resets OSC 2).
-*   **Sub-Oscillator (SH-101 Style)**: A dedicated square wave that is permanently pitched exactly one octave below OSC 1. Adds massive bottom-end bass without tying up OSC 2.
-*   **Noise Generator (White/Pink)**: Powered by a highly efficient 32-bit Linear Feedback Shift Register (LFSR). Essential for synthesizing percussive hits, wind, and lo-fi textures.
-*   **Ring Modulation (AM)**: Multiplies the output of OSC 1 and OSC 2 to create complex, inharmonic, and bell-like metallic tones.
+This project implements a real-time music synthesiser on the STM32L432KC platform using FreeRTOS, timer interrupts, CAN communication, and an OLED-based user interface. The design satisfies the coursework requirement for a concurrent embedded music system while extending the baseline synthesiser with structured performance-oriented features.
 
-### 2. Sound Shaping (Filters, Drive, & Wavefolding)
-*   **Three Distinct Filter Models**:
-    *   **Standard SVF**: A clean, digital State-Variable Filter.
-    *   **Moog Ladder Approximation (4-Pole LP)**: Features warm, non-linear feedback and soft clipping at the filter input for that signature classic "Moog" character.
-    *   **MS-20 Sallen-Key Approximation**: Aggressive, screaming resonance with asymmetric clipping in the feedback path, perfect for acid basslines and gritty leads.
-*   **Filter Types**: Selectable Low-Pass (LP), High-Pass (HP), Band-Pass (BP), and Notch.
-*   **Pre-Filter Overdrive/Saturation**: A dedicated soft-clipping drive stage applied right before the filter block to harmonic saturation.
-*   **Digital Wavefolding (Buchla/MicroFreak Style)**: Instead of clipping, loud signals fold backward upon themselves. Creates chaotic, bright, FM-like timbres when pushed hard.
+The system supports:
+- low-latency note generation
+- rotary-knob volume control
+- OLED feedback
+- periodic display refresh with LED heartbeat
+- CAN-based note messaging
+- modular DSP processing
+- advanced performance features for live musical control
 
-### 3. Modulation & Envelopes
-*   **Main VCA Envelope (ADSR)**: The primary Attack-Decay-Sustain-Release envelope tied to the final volume amplifier.
-*   **Secondary Modulation Envelope (AD)**: A completely separate Attack-Decay envelope that can be routed with bipolar amounts (-64 to +64) to Global Pitch, Filter Cutoff, or OSC 2 Pitch.
-*   **Multi-Wave LFO**: Global Low-Frequency Oscillator assignable to Pitch, Filter, or PWM.
-*   **Sample & Hold (ARP 2600 Style)**: Samples the LFSR Noise Generator exactly at the start of every LFO cycle, creating classic stepped, randomized modulation. S&H output can be routed to Pitch or Filter Cutoff.
-*   **Glide (Portamento)**: Slew limiter for sliding pitch between notes.
+Unlike a simple feature collection, the system is organised as a layered real-time architecture:
+- hardware scanning and input decoding
+- state update and note scheduling
+- performance feature transformation
+- audio-rate DSP synthesis
+- display and patch management
 
-### 4. Digital Effects (FX)
-*   **Digital Delay (Echo)**: An 8192-sample delay line with adjustable Time, Feedback, and Mix.
-*   **Chorus / Ensemble (Juno-60 Style)**: A bucket-brigade style delay line (2048 samples) driven by a dedicated internal sine-wave LFO to thicken mono signals into wide stereo-like pads.
-*   **Decimator (Sample Rate Reduction)**: Artificially drops the sample rate by holding the DSP output over several cycles, introducing aliasing and digital "ring".
-*   **Bitcrusher**: Destructively shifts the 8-bit output down to as low as 1-bit resolution for extreme lo-fi crunch and digital distortion.
+This structure was chosen to keep the code maintainable, analyzable, and aligned with the real-time requirements of the coursework.
 
-## Patch Memory System
-*   **16 Patch Slots**: Store and recall complete synth presets in flash memory
-*   **Patch Management Page**: Dedicated menu page for save/load/init operations
-*   **Dirty Flag Indicator**: Visual feedback when current patch has unsaved changes
+---
 
-## Enhanced Display Modes
-Long-press the joystick (1 second) to cycle through view modes:
+## Core Functional Requirements
 
-*   **Performance View (PERF)**: Original view with note display, volume, and waveform visualization
-*   **Oscilloscope View (SCOPE)**: Real-time waveform display with animated scope
-*   **Envelope View (ENV)**: Visual ADSR envelope shape with parameter values
+The system was designed to satisfy the core coursework requirements:
 
-## User Interface & Navigation
+- A pressed key produces the corresponding musical tone.
+- Audio is generated with no perceptible delay.
+- Volume is controlled by a rotary knob with at least 8 levels.
+- The OLED shows the current note and volume.
+- The OLED is refreshed every 100 ms and the LED toggles at the same interval.
+- CAN messaging is used for distributed keyboard note press/release communication.
+- The implementation uses both interrupts and threads.
+- Shared resources are protected.
+- The codebase is modular and maintainable.
+- Compile-time options are included for execution-time measurement.
 
-The flat interface has been upgraded to a hierarchical, multi-page menu system navigated via the Joystick and Rotary Knob:
+In this implementation, the performance view shows currently active notes, current volume, octave, and recent CAN message activity, while the menu system exposes advanced synthesis and performance controls.
 
-1.  **Short Press the Joystick**: Toggle between **Performance Mode** and **Menu Mode**
-2.  **Long Press the Joystick** (1 sec): Cycle through view modes (PERF → SCOPE → ENV)
-3.  **Move the Joystick Left/Right**: Switch between parameter pages.
-4.  **Move the Joystick Up/Down**: Highlight a specific parameter on the active page
-5.  **Turn the Rotary Knob**: Change the value of the highlighted parameter
-
-### UI Menu Map
-Navigate using the Joystick (L/R) and edit with the four rotary knobs:
-*   `OSC`: Osc 1 Morph | Osc 2 Wave | Mix | Osc 2 Detune
-*   `OSC2`: Sub Osc Mix | Noise Mix | Ring Mod Mix | Wavefolder
-*   `FLT`: Cutoff | Resonance | Env Depth | Type (LP/HP/BP/Notch)
-*   `MODEL`: Model (STD/MOOG/MS20) | Drive Level
-*   `ENV`: Attack | Decay | Sustain | Release
-*   `MOD`: LFO Rate | LFO Depth | *Empty* | Glide Time
-*   `MENV`: Mod Env A | Mod Env D | Amount (+/-) | Target (Ptch/Flt/Osc2)
-*   `S&H`: S&H Depth | S&H Target | *Empty* | *Empty*
-*   `FX`: Delay Time | Delay Fbk | Delay Mix | Hard Sync Toggle
-*   `CHO`: Chorus Rate | Chorus Depth | Chorus Mix | Bitcrusher Lvl
-*   `PATCH`: Slot Select | Load | Save | Init
+---
 
 ## System Architecture
 
-The monolithic codebase has been restructured into a scalable C++ project:
+The synthesiser is divided into five real-time layers:
 
-*   **`src/main.cpp`**: Orchestrates FreeRTOS tasks and system initialization.
-*   **`include/hw.h` / `src/hw.cpp`**: Hardware abstraction layer. Handles keyboard matrix scanning, joystick analog reads, and rotary encoder state machines within the 20ms `scanKeysTask`.
-*   **`include/ui.h` / `src/ui.cpp` / `src/ui_helpers.cpp`**: Manages the OLED display drawing via U8g2 and processes rotary knob rotations to update the correct DSP parameters. Runs in the 100ms `displayUpdateTask`. Uses `ui_helpers.cpp` and `sine_lut.h` for waveform visualization.
-*   **`include/dsp.h` / `src/dsp.cpp`**: The core sound engine. Runs entirely within the 22kHz `AudioISR` timer interrupt. Uses lock-free parameter buffering to ensure no audio dropouts occur while navigating the menu.
-*   **`include/globals.h` / `include/constants.h`**: Defines the shared `sysState` structures, hardware pins, and concurrency primitives (Mutexes) used for IPC between tasks.
-*   **`include/patch_memory.h` / `src/patch_memory.cpp`**: Patch memory management for storing/loading presets from STM32 flash memory. Handles CRC validation and thread-safe flash operations.
+### 1. Input and hardware layer
+This layer scans the keyboard matrix, reads the joystick and rotary encoders, and detects connection changes between keyboard modules.
 
-## Building and Flashing
+### 2. Communication layer
+This layer handles CAN receive and CAN transmit using interrupt-assisted queues and a dedicated transmit task.
 
-This project is built using PlatformIO. To compile and upload to the Nucleo board:
+### 3. Musical state layer
+This layer maintains physically held notes, expanded chord notes, arpeggiated output notes, and playback-driven note states.
+
+### 4. Audio DSP layer
+This layer runs at audio rate inside the timer ISR and performs oscillator generation, envelopes, filtering, modulation, effects, and final PWM output.
+
+### 5. Display and patch layer
+This layer updates the OLED, provides menu feedback, and manages patch storage and recall from STM32 flash.
+
+This decomposition keeps hard real-time audio work separate from slower UI and control tasks.
+
+---
+
+## Task Decomposition
+
+The following concurrent activities are used in the system.
+
+| Task / ISR | Type | Trigger / Period | Main Responsibility |
+|---|---|---:|---|
+| `sampleISR()` | Interrupt | 22 kHz | Real-time audio generation and PWM output |
+| `CAN_RX_ISR()` | Interrupt | on CAN RX | Move received CAN frame into queue |
+| `CAN_TX_ISR()` | Interrupt | on CAN TX complete | Release TX semaphore |
+| `scanKeysTask()` | Thread | 20 ms | Scan matrix, read knobs, joystick, local key changes |
+| `decodeTask()` | Thread | event-driven | Decode incoming CAN messages into pressed-key state |
+| `CAN_TX_Task()` | Thread | event-driven | Send queued CAN messages safely |
+| `performanceTask()` | Thread | 5 ms | Apply chord expansion, arpeggiator, and automation logic |
+| `displayUpdateTask()` | Thread | 100 ms | Refresh OLED and toggle heartbeat LED |
+| timer-start task | Thread | one-shot | Start hardware sample timer after scheduler begins |
+
+### Notes on implementation
+- The highest-rate operation is the audio ISR.
+- CAN receive and transmit completion are interrupt-driven.
+- Slower or stateful logic is handled in FreeRTOS tasks.
+- Musical transformation features are isolated in `performanceTask()` rather than mixed into the audio ISR.
+
+---
+
+## Real-Time Scheduling Strategy
+
+The design follows a practical fixed-priority real-time structure:
+
+- **Audio generation** is executed inside the hardware timer ISR and therefore has the highest urgency.
+- **CAN receive** and **CAN transmit completion** are ISR-driven to minimise communication latency.
+- **Message decoding** and **performance feature updates** are executed as RTOS tasks.
+- **Display updates** are intentionally slow and periodic to avoid disturbing time-critical audio execution.
+
+This separation ensures that:
+- hard real-time audio is never blocked by OLED drawing or patch operations
+- musical control logic runs often enough to feel responsive
+- communication is decoupled through queues and semaphores
+- the code remains analyzable using task periods and measured execution times
+
+---
+
+## Shared Data and Synchronisation
+
+Several shared data structures are accessed by multiple concurrent activities.
+
+| Shared resource | Used by | Protection strategy |
+|---|---|---|
+| `sysState.params` | UI, DSP update, patch management, performance logic | mutex-protected copy/update |
+| `sysState.pressedKeys` / `pressedKeyCount` | scan task, decode task, performance task | mutex |
+| `sysState.synthKeys` / `synthKeyCount` | performance task, automation logic, voice engine update | mutex / controlled update path |
+| `msgInQ` | CAN RX ISR, decode task, local key routing | FreeRTOS queue |
+| `msgOutQ` | scan task / handshake logic, CAN TX task | FreeRTOS queue |
+| `CAN_TX_Semaphore` | CAN TX ISR, CAN TX task | FreeRTOS counting semaphore |
+| patch flash state | UI / patch operations | dedicated patch mutex |
+| local DSP parameter buffer | DSP update and audio ISR | copied into ISR-local state |
+
+### Synchronisation principles used
+- Shared system state is protected using a mutex.
+- ISR-to-task communication uses queues and semaphores instead of direct shared-state mutation.
+- The audio ISR works on a local parameter copy rather than repeatedly locking shared state.
+- Flash operations use a separate mutex to isolate patch operations from general UI activity.
+
+This keeps the hard real-time path short and reduces the risk of races or long blocking sections.
+
+---
+
+## Advanced Features
+
+The coursework encourages advanced features that enhance music generation while still respecting real-time constraints. The system includes three main performance-oriented additions:
+
+### 1. Chord Memory / Chord Expansion
+Chord mode converts a single held note into a structured chord voicing. Supported chord types include:
+- major
+- minor
+- sus2
+- sus4
+- dominant 7
+- minor 7
+
+Additional controls allow:
+- inversion
+- spread
+- multi-note chord expansion from several held roots
+
+This feature increases harmonic output without increasing the physical playing complexity for the user.
+
+### 2. Arpeggiator
+The arpeggiator transforms held or chord-expanded notes into a timed note sequence. Supported modes include:
+- up
+- down
+- up/down
+- random
+
+User-adjustable controls include:
+- on/off
+- mode
+- rate
+- octave range
+
+Rather than generating all notes simultaneously, the arpeggiator turns the harmonic pool into a rhythmic melodic stream, making the synthesiser behave more like a performance sequencer.
+
+### 3. Automation / Phrase Recording
+The automation system records note-state changes over time and replays them as a loop. It supports:
+- record enable
+- playback enable
+- automatic loop restart
+- phrase-length tracking
+- clear/reset control
+
+This allows the user to play a phrase once and then let the system repeat it continuously. The result is not just a static synthesiser voice but a repeatable live-performance system.
+
+---
+
+## Why the Arpeggiator + Automation Combination Was Chosen
+
+The strongest advanced-feature combination in this project is:
+
+**Arpeggiator + Automation Recording**
+
+This combination was chosen because it gives the clearest musical and technical improvement for marking purposes.
+
+### Why this combination is strong musically
+The arpeggiator immediately produces audible rhythmic note generation from held keys or chord voicings. The automation recorder then captures phrase changes and replays them as a loop. Together, these features transform the system from a simple keyboard synthesiser into a structured performance instrument.
+
+In practical use:
+- chord mode can generate a harmonic note pool
+- the arpeggiator can step through this pool rhythmically
+- automation can capture the resulting phrase over time
+- playback can loop the phrase continuously
+
+This creates a much stronger musical result than a simple one-shot effect.
+
+### Why this combination is strong for coursework marking
+This feature set matches the advanced-feature expectations particularly well because it demonstrates:
+
+- **music generation enhancement** rather than cosmetic behaviour
+- **clear real-time scheduling constraints** through periodic step processing
+- **software engineering structure** through separate modules and clean processing stages
+- **hardware utilisation** through knobs, OLED pages, and live user control
+
+It is therefore a strong match for the coursework expectation that advanced features should enhance music generation, respect real-time constraints, and demonstrate good engineering practice.
+
+### Internal processing order
+The performance pipeline is intentionally structured as:
+
+1. physical held notes  
+2. chord expansion  
+3. arpeggiator note selection  
+4. automation record/playback control  
+5. synth voice assignment  
+6. audio-rate DSP rendering  
+
+This is important because it means the system is not just “many features added together”. Instead, the features are organised as a controlled musical transformation chain.
+
+---
+
+## User Interface and Control Mapping
+
+The user interface is split into two main operating states:
+
+### Performance view
+This view shows:
+- currently active note names
+- volume level
+- octave
+- waveform visualisation
+- recent CAN message activity
+
+### Menu pages
+The OLED menu exposes structured parameter pages for synthesis, modulation, effects, patch memory, and performance features.
+
+### Performance-feature pages
+- **ARP**: on/off, mode, rate, octave range
+- **CHRD**: on/off, chord type, inversion, spread
+- **AUTO**: record, play, loop length, clear
+
+This is important for the documentation because it shows that advanced features are recoverable and controllable from the interface, rather than permanently overriding the core synthesiser behaviour.
+
+---
+
+## Source File Structure
+
+### Core orchestration
+- `src/main.cpp`  
+  Initializes the system, creates FreeRTOS tasks, registers CAN ISRs, starts the sample timer, and defines the concurrency structure.
+
+### Hardware and input
+- `src/hw.cpp`  
+  Handles matrix scanning, rotary encoder decoding, joystick reads, keyboard handshake, and local note event creation.
+
+### UI and display
+- `src/ui.cpp`  
+  Draws OLED pages, performance screens, advanced feature menus, and handles knob-based parameter editing.
+- `src/ui_helpers.cpp`  
+  Small helper functions used by the display system.
+
+### Performance features
+- `src/chord_memory.cpp`  
+  Expands held notes into chord voicings.
+- `src/arpeggiator.cpp`  
+  Generates timed single-note output from the available note pool.
+- `src/automation.cpp`  
+  Records and replays note-state changes as a looping phrase.
+
+### DSP engine
+- `src/dsp.cpp`  
+  Audio ISR processing path: oscillators, modulation, envelopes, filters, effects, and output.
+- `src/oscillators.cpp`  
+  Oscillator mixing and wavefolding.
+- `src/envelopes.cpp`  
+  Voice ADSR and modulation envelope handling.
+- `src/lfo_modulation.cpp`  
+  LFO, noise, and sample-and-hold generation.
+- `src/filters.cpp`  
+  SVF, Moog-style, and MS-20-style filter models.
+- `src/effects.cpp`  
+  Delay, chorus, bitcrusher, and decimator processing.
+- `src/voice_engine.cpp`  
+  Polyphonic voice allocation and note-to-step conversion.
+
+### Patch memory
+- `src/patch_memory.cpp`  
+  Flash-backed patch save/load with validation and mutex protection.
+
+### Navigation
+- `src/navigation.cpp`  
+  Joystick-based page and view navigation.
+
+---
+
+## Execution Time Measurement
+
+The coursework requires compile-time options for measuring execution time. This project includes build switches for that purpose.
+
+### Profiling switches
+- `TEST_SCANKEYS_WCET`
+- `TEST_DISPLAY_WCET`
+- optional disabling of threads / CAN ISR / sample ISR for measurement builds
+
+These switches allow isolated timing measurements of selected tasks without changing the runtime architecture of the full system.
+
+### Measurement method
+For each periodic task, the intended workflow is:
+1. enable the relevant WCET test macro
+2. run the isolated function multiple times
+3. print average or maximum execution time using `micros()`
+4. use the measured value for CPU-utilisation and RMS analysis
+
+### Report note
+Measured WCET values should be inserted here after profiling on the target board.
+
+| Task | Period / trigger | Measured max execution time |
+|---|---:|---:|
+| `scanKeysTask()` | 20 ms | TODO |
+| `displayUpdateTask()` | 100 ms | TODO |
+| `performanceTask()` | 5 ms | TODO |
+| `decodeTask()` | event-driven | TODO |
+| `CAN_TX_Task()` | event-driven | TODO |
+| `sampleISR()` | 22 kHz | TODO |
+
+---
+
+## CPU Utilisation and Rate Monotonic Analysis
+
+This section should be completed using the measured WCET values from the target hardware.
+
+### Theoretical minimum initiation intervals
+The system contains the following principal periodic activities:
+
+| Task | Minimum initiation interval |
+|---|---:|
+| `sampleISR()` | 1 / 22000 s |
+| `performanceTask()` | 5 ms |
+| `scanKeysTask()` | 20 ms |
+| `displayUpdateTask()` | 100 ms |
+
+Additional communication tasks are event-driven and should be analysed according to worst-case message arrival assumptions.
+
+### CPU utilisation expression
+For the periodic tasks, utilisation can be estimated by:
+
+`U = Σ (Ci / Ti)`
+
+where:
+- `Ci` is the measured worst-case execution time
+- `Ti` is the minimum initiation interval
+
+### Critical instant analysis
+Under a fixed-priority interpretation:
+- the sample ISR has the highest urgency
+- shorter-period tasks dominate longer-period tasks
+- display refresh has the lowest priority among periodic activities
+
+The critical instant occurs when all periodic tasks are released together and higher-priority work interferes with lower-priority work maximally. The analysis should demonstrate that all tasks still complete before their deadlines using measured WCET values.
+
+### Report note
+Replace this section with the final measured numbers and working after timing tests are complete.
+
+---
+
+## Blocking and Deadlock Analysis
+
+### Blocking sources
+Potential blocking can occur at:
+- the system mutex
+- the patch-memory mutex
+- queue receive/send points
+- the CAN transmit semaphore
+
+### Why deadlock risk is low
+The design minimises deadlock risk for the following reasons:
+
+1. The audio ISR does not wait on a mutex.
+2. ISR-to-task communication is one-way through FreeRTOS queues/semaphores.
+3. Patch operations use a dedicated mutex rather than reusing all system locks.
+4. The main shared state is accessed through short mutex-protected sections.
+5. The concurrency design is mostly producer-consumer rather than nested lock chains.
+
+### Remaining caution
+The strongest caution point is any path that holds the system mutex while calling additional logic. For final submission, this should be reviewed carefully and kept as short as possible.
+
+---
+
+## Build and Flash Instructions
+
+This project is built using PlatformIO.
 
 ```bash
+pio run
 pio run -t upload
-```
-
-Ensure the correct `lib_deps` are installed via `platformio.ini`:
-*   `olikraus/U8g2`
-*   `stm32duino/STM32duino FreeRTOS`
-
-## Hardware Specifications
-
-- **MCU**: STM32L432KC (ARM Cortex-M4)
-- **Display**: SSD1305 128x32 OLED
-- **Audio**: 22kHz sample rate, 8-bit resolution (PWM)
-- **Key Matrix**: 3 rows x 4 columns (scanned)
-- **Knobs**: Quadrature encoders via matrix
-- **Joystick**: Analog X/Y and digital push button
-
-## License
-
-This project is an advanced extension of the Embedded Systems coursework synthesizer.
