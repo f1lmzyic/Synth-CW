@@ -60,20 +60,11 @@ void CAN_TX_ISR() {
                     sysState.pressedKeys[globalKey] = 1;
                     sysState.numPressedKeys++;
                 }
-                // Legacy support - first key becomes pressedKey
-                if (sysState.pressedKey == -1) {
-                    sysState.pressedKey = octave * 12 + keyIndex;
-                }
             } else if (msgType == 'R') {
                 // Key release - remove from pressed keys
                 if (sysState.pressedKeys[globalKey]) {
                     sysState.pressedKeys[globalKey] = 0;
                     if (sysState.numPressedKeys > 0) sysState.numPressedKeys--;
-                }
-                // Legacy support - clear pressedKey if it's this key
-                int legacyKey = octave * 12 + keyIndex;
-                if (sysState.pressedKey == legacyKey) {
-                    sysState.pressedKey = -1; // Will be updated by voice allocation
                 }
             } else if (msgType == 'H') {
                 sysState.lastHandshakePos = RX_Message[1];
@@ -161,7 +152,6 @@ void setup() {
     // Init state
     sysState.menuMode = false;
     sysState.activePage = PAGE_OSC;
-    sysState.pressedKey = -1;
     sysState.currentPatchSlot = 0;
     sysState.patchDirty = false;
     sysState.viewMode = 0; // Default to performance view
@@ -178,10 +168,7 @@ void setup() {
 
     dspInit();
 
-    // Diagnostic toggle before uiInit
-    digitalWrite(LED_BUILTIN, HIGH);
     uiInit();
-    digitalWrite(LED_BUILTIN, LOW);
 
     patchMemoryInit();
 
@@ -198,10 +185,7 @@ void setup() {
     CAN_RegisterRX_ISR(CAN_RX_ISR);
     CAN_RegisterTX_ISR(CAN_TX_ISR);
 
-    // Diagnostic before CAN_Start
-    digitalWrite(LED_BUILTIN, HIGH);
     CAN_Start();
-    digitalWrite(LED_BUILTIN, LOW);
 
     if (xTaskCreate(decodeTask, "decode", 256, nullptr, 3, NULL) != pdPASS) {
         fatalError();

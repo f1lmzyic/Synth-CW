@@ -153,11 +153,8 @@ struct SystemState {
     // ============================================================================
     // Polyphonic key state - supports multiple simultaneous key presses
     // ============================================================================
-    // Legacy single key support (for backward compatibility)
-    int pressedKey; // -1 if no key
     uint32_t targetStepSize; // Used for glide
-    
-    // Multi-key tracking (new polyphonic system)
+
     volatile uint8_t pressedKeys[MAX_TOTAL_KEYS];    // Which keys (0-35) are currently pressed
     volatile uint8_t numPressedKeys;                 // Count of currently pressed keys
     volatile uint8_t keyboardId;                     // This keyboard's ID (0, 1, 2)

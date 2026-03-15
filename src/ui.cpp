@@ -544,8 +544,13 @@ void displayUpdateTask(void * pvParameters) {
                 // 1. Left Side: Note and Volume
                 u8g2->setFont(u8g2_font_ncenB08_tr);
                 u8g2->setCursor(0, 20);
-                if (localState.pressedKey >= 0) {
-                    u8g2->print(notes[localState.pressedKey % 12]);
+                // Find first pressed key for display
+                int firstKey = -1;
+                for (int i = 0; i < MAX_TOTAL_KEYS && firstKey < 0; i++) {
+                    if (localState.pressedKeys[i]) firstKey = i;
+                }
+                if (firstKey >= 0) {
+                    u8g2->print(notes[firstKey % 12]);
                 } else {
                     u8g2->print("-");
                 }
@@ -680,8 +685,13 @@ void displayUpdateTask(void * pvParameters) {
                 // Show frequency info
                 u8g2->setFont(u8g2_font_5x7_tr);
                 char buf[20];
-                if (localState.pressedKey >= 0) {
-                    sprintf(buf, "Key: %d", localState.pressedKey);
+                // Find first pressed key for display
+                int scopeFirstKey = -1;
+                for (int i = 0; i < MAX_TOTAL_KEYS && scopeFirstKey < 0; i++) {
+                    if (localState.pressedKeys[i]) scopeFirstKey = i;
+                }
+                if (scopeFirstKey >= 0) {
+                    sprintf(buf, "Key: %d", scopeFirstKey);
                 } else {
                     sprintf(buf, "Key: -");
                 }

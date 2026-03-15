@@ -153,10 +153,8 @@ void scanKeysTask(void * pvParameters) {
         }
         
         // ============================================================================
-        // Multi-key detection - detect ALL pressed keys (0-11), not just first
+        // Multi-key detection - detect ALL pressed keys (0-11)
         // ============================================================================
-        int pressedKey = -1;
-
         // Track which keys are currently pressed (boolean array)
         static bool keysPressed[KEYS_PER_KEYBOARD] = {false};
         static bool keysPrevPressed[KEYS_PER_KEYBOARD] = {false};
@@ -165,11 +163,6 @@ void scanKeysTask(void * pvParameters) {
         for(int i = 0; i < KEYS_PER_KEYBOARD; i++){
             // localInputs[i] == 0 means key is pressed (active low)
             keysPressed[i] = !localInputs[i];
-
-            // Legacy support - first key becomes pressedKey
-            if (keysPressed[i] && pressedKey == -1) {
-                pressedKey = sysState.currentOctave * 12 + i;
-            }
         }
 
         // Compare with previous state to detect changes and send messages
@@ -289,7 +282,6 @@ void scanKeysTask(void * pvParameters) {
             MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
             if (lock) {
                 sysState.inputs = localInputs;
-                sysState.pressedKey = pressedKey;
             }
         }
 
