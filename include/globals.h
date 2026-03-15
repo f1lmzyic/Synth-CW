@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <bitset>
+#include <set>
 #include <STM32FreeRTOS.h>
 
 class MutexGuard {
@@ -43,9 +44,7 @@ private:
 // Polyphony configuration
 // ============================================================================
 #define POLYPHONY 8              // Maximum simultaneous voices
-#define MAX_KEYBOARD_IDS 3       // Maximum number of keyboards
-#define KEYS_PER_KEYBOARD 12    // Keys per keyboard module
-#define MAX_TOTAL_KEYS (MAX_KEYBOARD_IDS * KEYS_PER_KEYBOARD) // 36 keys max
+#define KEYS_PER_KEYBOARD 12     // Keys per keyboard module
 
 // Waveform definitions
 enum WaveformType {
@@ -153,25 +152,25 @@ struct SystemState {
     // ============================================================================
     // Polyphonic key state - supports multiple simultaneous key presses
     // ============================================================================
-    uint32_t targetStepSize; // Used for glide
-
-    volatile uint8_t pressedKeys[MAX_TOTAL_KEYS];    // Which keys (0-35) are currently pressed
-    volatile uint8_t numPressedKeys;                 // Count of currently pressed keys
-    volatile uint8_t keyboardId;                     // This keyboard's ID (0, 1, 2)
-    volatile bool isPolyphonic;                      // True if polyphonic mode is active
-    
-    // Voice allocation state
-    volatile uint8_t voiceKey[POLYPHONY];            // Which key (0-35) each voice is playing
-    volatile bool voiceActive[POLYPHONY];            // Is each voice currently playing
+    std::set<uint16_t> pressedKeys;                  // Set of pressed keys (keyboardId * 12 + keyIndex)
+    volatile uint8_t keyboardId;                     // This keyboard's ID (0, 1, 2, ...)
 
     // Patch management
     uint8_t currentPatchSlot;    // Currently loaded patch (0-15)
     bool patchDirty;             // True if current patch has unsaved changes
     
     uint8_t RX_Message[8];
-    bool isSenderNode; // true=sender, false=receiver
-    uint8_t currentOctave; // Default octave
-    int lastHandshakePos;
+    int16_t lastHandshakePos;  // -1 = no handshake, else position from left neighbor
+
+    // Keyboard detection
+    volatile bool hasLeft;
+    volatile bool hasRight;
+
+    // Multi-keyboard connection state
+    bool prevWestIn;
+    bool prevEastIn;
+    bool eastOut;
+    uint32_t lastConnectionChangeTime;
 };
 
 // Extern declaration for the shared state

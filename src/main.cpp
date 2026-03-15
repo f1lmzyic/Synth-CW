@@ -24,13 +24,10 @@ void fatalError() {
 }
 
 void CAN_RX_ISR() {
-#if (NODE_MODE != MODE_SENDER_ONLY)
     uint8_t RX_Message_ISR[8];
     uint32_t ID;
     CAN_RX(ID, RX_Message_ISR);
     xQueueSendFromISR(msgInQ, RX_Message_ISR, NULL);
-#endif
-    // In SENDER_ONLY mode, ISR is still called but we ignore RX data
 }
 
 void CAN_TX_ISR() {
@@ -41,37 +38,38 @@ void CAN_TX_ISR() {
     uint8_t RX_Message[8];
     while (true) {
         xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
-#if (NODE_MODE != MODE_SENDER_ONLY)
         MutexGuard lock(sysState.mutex);
         if (lock) {
             uint8_t msgType = RX_Message[0];
-            uint8_t octave = RX_Message[1];
-            uint8_t keyIndex = RX_Message[2];
-            uint8_t keyboardId = RX_Message[3]; // New: keyboard ID
 
-            // Calculate global key number (0-35 for 3 keyboards)
-            uint8_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
+            // Handshake messages processed by all keyboards (for position detection)
+            if (msgType == 'H') {
+                sysState.lastHandshakePos = RX_Message[1];
+                continue;
+            }
+
+            // Key messages only processed by rightmost keyboard (the one that plays audio)
+            // Rightmost = has no right neighbor
+            if (sysState.hasRight) {
+                continue;
+            }
+
+            uint8_t keyIndex = RX_Message[1];
+            uint8_t keyboardId = RX_Message[2];
+
+            // Calculate global key number (keyboardId * 12 + keyIndex)
+            uint16_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
 
             for (int i = 0; i < 8; i++) sysState.RX_Message[i] = RX_Message[i];
 
             if (msgType == 'P') {
-                // Key press - add to pressed keys
-                if (!sysState.pressedKeys[globalKey]) {
-                    sysState.pressedKeys[globalKey] = 1;
-                    sysState.numPressedKeys++;
-                }
+                // Key press - add to pressed keys set
+                sysState.pressedKeys.insert(globalKey);
             } else if (msgType == 'R') {
-                // Key release - remove from pressed keys
-                if (sysState.pressedKeys[globalKey]) {
-                    sysState.pressedKeys[globalKey] = 0;
-                    if (sysState.numPressedKeys > 0) sysState.numPressedKeys--;
-                }
-            } else if (msgType == 'H') {
-                sysState.lastHandshakePos = RX_Message[1];
-                sysState.keyboardId = RX_Message[1];
+                // Key release - remove from pressed keys set
+                sysState.pressedKeys.erase(globalKey);
             }
         }
-#endif
     }
 }
 
@@ -80,9 +78,8 @@ void CAN_TX_ISR() {
     while (true) {
         xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
         if (xSemaphoreTake(CAN_TX_Semaphore, pdMS_TO_TICKS(10)) == pdTRUE) {
-#if (NODE_MODE != MODE_RECEIVER_ONLY)
+            // Always transmit - runtime logic in hw.cpp decides what to queue
             CAN_TX(0x123, msgOut);
-#endif
         }
     }
 }
@@ -155,16 +152,19 @@ void setup() {
     sysState.currentPatchSlot = 0;
     sysState.patchDirty = false;
     sysState.viewMode = 0; // Default to performance view
-    sysState.isSenderNode = true;
-    sysState.currentOctave = 5; // C4 is 60 -> 5*12=60
     sysState.lastHandshakePos = -1;
     sysState.keyboardId = 0; // Default keyboard ID
-    sysState.isPolyphonic = true; // Enable polyphonic mode
 
-    // Initialize polyphony arrays (voiceKey needs 0xFF, not 0)
-    // Note: pressedKeys, voiceActive, RX_Message are zero-initialized by default (global storage)
-    sysState.numPressedKeys = 0;
-    memset((void*)sysState.voiceKey, 0xFF, POLYPHONY);
+    // Multi-keyboard: assume standalone until handshake determines otherwise
+    sysState.hasLeft = false;
+    sysState.hasRight = false;  // No right neighbor = plays audio (standalone mode)
+    sysState.prevWestIn = false;
+    sysState.prevEastIn = false;
+    sysState.eastOut = true;
+    sysState.lastConnectionChangeTime = 0;
+
+    // Initialize polyphony state
+    sysState.pressedKeys.clear();
 
     dspInit();
 

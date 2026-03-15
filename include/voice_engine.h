@@ -16,7 +16,7 @@ extern volatile uint32_t voicePhase[POLYPHONY];
 extern volatile uint32_t voiceStep[POLYPHONY];
 extern volatile uint32_t voiceTargetStep[POLYPHONY];
 extern volatile int32_t voiceEnvValue[POLYPHONY];
-extern volatile uint8_t voiceKey[POLYPHONY];
+extern volatile uint16_t voiceKey[POLYPHONY];
 extern volatile bool voiceActive[POLYPHONY];
 extern volatile bool voiceRetrigger[POLYPHONY];
 extern volatile uint8_t voiceEnvState[POLYPHONY];

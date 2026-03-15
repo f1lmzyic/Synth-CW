@@ -94,9 +94,9 @@ void scanKeysTask(void * pvParameters) {
                 knobCurrentStates[0] = (cols[2] << 1) | cols[3];
             }
         }
-        
+
         // Read joystick button (row 5, col 2) and West input (row 5, col 3)
-        setRow(5, westOut);
+        setRow(5, true);
         delayMicroseconds(3);
         std::bitset<4> cols5 = readCols();
         localInputs[20] = cols5[0];
@@ -104,9 +104,9 @@ void scanKeysTask(void * pvParameters) {
         localInputs[22] = cols5[2]; // Joystick S button
         localInputs[23] = cols5[3]; // West Input
         bool westIn = !cols5[3];
-        
+
         // Read East input (row 6, col 3)
-        setRow(6, eastOut);
+        setRow(6, sysState.eastOut);
         delayMicroseconds(3);
         std::bitset<4> cols6 = readCols();
         bool eastIn = !cols6[3]; // East Input
@@ -127,8 +127,9 @@ void scanKeysTask(void * pvParameters) {
                     {
                         MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
                         if (lock) {
-                            sysState.currentOctave = eastIn ? 4 : 5;
                             sysState.keyboardId = 0;
+                            sysState.hasLeft = false;  // Leftmost has no left neighbor
+                            sysState.hasRight = eastIn;
                         }
                     }
                     uint8_t TX_Message[8] = {'H', 0, 0, 0, 0, 0, 0, 0};
@@ -141,9 +142,9 @@ void scanKeysTask(void * pvParameters) {
                     {
                         MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
                         if (lock) {
-                            // Octave decreases as we go right: keyboard 0=4, keyboard 1=3, keyboard 2=2
-                            sysState.currentOctave = 4 - modulePosition;
                             sysState.keyboardId = localKeyboardId;
+                            sysState.hasLeft = true;   // We got here via handshake, so there's a left neighbor
+                            sysState.hasRight = eastIn;
                         }
                     }
                     uint8_t TX_Message[8] = {'H', (uint8_t)modulePosition, 0, 0, 0, 0, 0, 0};
@@ -160,24 +161,28 @@ void scanKeysTask(void * pvParameters) {
         static bool keysPrevPressed[KEYS_PER_KEYBOARD] = {false};
 
         // Scan all 12 keys and build pressed keys array
-        for(int i = 0; i < KEYS_PER_KEYBOARD; i++){
+        for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
             // localInputs[i] == 0 means key is pressed (active low)
             keysPressed[i] = !localInputs[i];
         }
 
         // Compare with previous state to detect changes and send messages
-        for(int i = 0; i < KEYS_PER_KEYBOARD; i++) {
+        for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
             if (keysPrevPressed[i] != keysPressed[i]) {
                 uint8_t msgType = keysPressed[i] ? 'P' : 'R';
-                uint8_t TX_Message[8] = {msgType, sysState.currentOctave, (uint8_t)i, localKeyboardId, 0, 0, 0, 0};
-#if (NODE_MODE != MODE_RECEIVER_ONLY)
-                xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-#endif
-#if (NODE_MODE != MODE_SENDER_ONLY)
-                if (!(CAN_LOOPBACK && (NODE_MODE == MODE_BIDIRECTIONAL))) {
+                uint8_t TX_Message[8] = {msgType, (uint8_t)i, sysState.keyboardId, 0, 0, 0, 0, 0};
+
+                // Send on CAN if connected to other keyboards
+                if (sysState.hasLeft || sysState.hasRight) {
+                    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+                }
+
+                // Process locally if this keyboard plays audio (rightmost or standalone)
+                // Rightmost = has no right neighbor
+                if (!sysState.hasRight) {
                     xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
                 }
-#endif
+
                 keysPrevPressed[i] = keysPressed[i];
             }
         }

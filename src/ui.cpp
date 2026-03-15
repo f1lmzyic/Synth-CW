@@ -546,8 +546,8 @@ void displayUpdateTask(void * pvParameters) {
                 u8g2->setCursor(0, 20);
                 // Find first pressed key for display
                 int firstKey = -1;
-                for (int i = 0; i < MAX_TOTAL_KEYS && firstKey < 0; i++) {
-                    if (localState.pressedKeys[i]) firstKey = i;
+                if (!localState.pressedKeys.empty()) {
+                    firstKey = *localState.pressedKeys.begin();
                 }
                 if (firstKey >= 0) {
                     u8g2->print(notes[firstKey % 12]);
@@ -687,8 +687,8 @@ void displayUpdateTask(void * pvParameters) {
                 char buf[20];
                 // Find first pressed key for display
                 int scopeFirstKey = -1;
-                for (int i = 0; i < MAX_TOTAL_KEYS && scopeFirstKey < 0; i++) {
-                    if (localState.pressedKeys[i]) scopeFirstKey = i;
+                if (!localState.pressedKeys.empty()) {
+                    scopeFirstKey = *localState.pressedKeys.begin();
                 }
                 if (scopeFirstKey >= 0) {
                     sprintf(buf, "Key: %d", scopeFirstKey);

@@ -1,12 +1,13 @@
 #include "voice_engine.h"
 #include <Arduino.h>
+#include <map>
 #include "constants.h"
 
 // ============================================================================
 // Voice allocation state (internal to voice engine)
 // ============================================================================
 static uint8_t voiceAllocIndex = 0;  // Round-robin allocator
-static uint8_t pianoKeyMap[MAX_TOTAL_KEYS] = {0xFF};  // Reverse lookup
+static std::map<uint16_t, uint8_t> pianoKeyMap;  // key -> voice index
 
 // ============================================================================
 // Voice state arrays - exported for ISR access (lock-free by design)
@@ -16,7 +17,7 @@ volatile uint32_t voicePhase[POLYPHONY] = {0};
 volatile uint32_t voiceStep[POLYPHONY] = {0};
 volatile uint32_t voiceTargetStep[POLYPHONY] = {0};
 volatile int32_t voiceEnvValue[POLYPHONY] = {0};
-volatile uint8_t voiceKey[POLYPHONY] = {0xFF};
+volatile uint16_t voiceKey[POLYPHONY] = {0xFFFF};
 volatile bool voiceActive[POLYPHONY] = {false};
 volatile bool voiceRetrigger[POLYPHONY] = {false};
 volatile uint8_t voiceEnvState[POLYPHONY] = {VOICE_ENV_IDLE};
@@ -37,10 +38,10 @@ void voiceEngineInit(void) {
     memset((void*)voiceStep, 0, sizeof(voiceStep));
     memset((void*)voiceTargetStep, 0, sizeof(voiceTargetStep));
     memset((void*)voiceEnvValue, 0, sizeof(voiceEnvValue));
-    memset((void*)voiceKey, 0xFF, sizeof(voiceKey));
+    memset((void*)voiceKey, 0xFF, sizeof(voiceKey));  // 0xFFFF marks unused
     memset((void*)voiceActive, 0, sizeof(voiceActive));
     memset((void*)voiceRetrigger, 0, sizeof(voiceRetrigger));
-    memset(pianoKeyMap, 0xFF, sizeof(pianoKeyMap));
+    pianoKeyMap.clear();
     memset((void*)voiceEnvState, VOICE_ENV_IDLE, sizeof(voiceEnvState));
     voiceAllocIndex = 0;
 }
@@ -65,15 +66,13 @@ void voiceEngineUpdateParams(void) {
     // Step 1: Release voices for keys no longer pressed
     for (int v = 0; v < POLYPHONY; v++) {
         if (voiceActive[v]) {
-            uint8_t key = voiceKey[v];
-            if (key < MAX_TOTAL_KEYS && !sysState.pressedKeys[key]) {
+            uint16_t key = voiceKey[v];
+            if (sysState.pressedKeys.find(key) == sysState.pressedKeys.end()) {
                 voiceActive[v] = false;
-                voiceKey[v] = 0xFF;
+                voiceKey[v] = 0xFFFF;
                 voiceEnvState[v] = VOICE_ENV_RELEASE;
                 voiceRetrigger[v] = false;
-                if (pianoKeyMap[key] == v) {
-                    pianoKeyMap[key] = 0xFF;
-                }
+                pianoKeyMap.erase(key);
             }
         }
     }
@@ -82,8 +81,8 @@ void voiceEngineUpdateParams(void) {
     // to ensure smooth envelope decay. Don't duplicate it here.
 
     // Step 2: Allocate voices for newly pressed keys
-    for (int i = 0; i < MAX_TOTAL_KEYS; i++) {
-        if (sysState.pressedKeys[i] && pianoKeyMap[i] == 0xFF) {
+    for (uint16_t key : sysState.pressedKeys) {
+        if (pianoKeyMap.find(key) == pianoKeyMap.end()) {
             // Find free voice
             int8_t freeVoice = -1;
             for (int v = 0; v < POLYPHONY; v++) {
@@ -99,28 +98,26 @@ void voiceEngineUpdateParams(void) {
                 voiceAllocIndex = (voiceAllocIndex + 1) % POLYPHONY;
 
                 // Release old voice
-                uint8_t oldKey = voiceKey[freeVoice];
-                if (oldKey < MAX_TOTAL_KEYS) {
-                    pianoKeyMap[oldKey] = 0xFF;
-                }
-                voiceKey[freeVoice] = 0xFF;
+                uint16_t oldKey = voiceKey[freeVoice];
+                pianoKeyMap.erase(oldKey);
+                voiceKey[freeVoice] = 0xFFFF;
                 voiceActive[freeVoice] = false;
                 voiceEnvState[freeVoice] = VOICE_ENV_RELEASE;
                 voiceRetrigger[freeVoice] = false;
             }
 
             // Allocate voice to key
-            voiceKey[freeVoice] = i;
+            voiceKey[freeVoice] = key;
             voiceActive[freeVoice] = true;
             voiceRetrigger[freeVoice] = true;
             voiceEnvValue[freeVoice] = 0;
             voiceEnvState[freeVoice] = VOICE_ENV_ATTACK;
-            pianoKeyMap[i] = freeVoice;
+            pianoKeyMap[key] = freeVoice;
 
             // Calculate step size
-            uint8_t keyboardId = i / KEYS_PER_KEYBOARD;
-            uint8_t keyInKeyboard = i % KEYS_PER_KEYBOARD;
-            int midiNote = (5 - keyboardId) * 12 + keyInKeyboard;
+            uint16_t keyboardId = key / KEYS_PER_KEYBOARD;
+            uint8_t keyInKeyboard = key % KEYS_PER_KEYBOARD;
+            int midiNote = (4 + keyboardId) * 12 + keyInKeyboard;
             voiceTargetStep[freeVoice] = voiceEngineGetStepSizeForMidiNote(midiNote);
 
             if (sysState.params.glideTime == 0) {

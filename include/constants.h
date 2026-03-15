@@ -59,3 +59,7 @@ const int DEN_BIT = 3;
 const int DRST_BIT = 4;
 const int HKOW_BIT = 5;
 const int HKOE_BIT = 6;
+
+// Multi-keyboard handshake timing (ms)
+const uint32_t HANDSHAKE_STARTUP_DELAY = 1000;   // Wait after boot before handshake
+const uint32_t HANDSHAKE_SETTLE_TIME = 200;      // Wait after connection change
