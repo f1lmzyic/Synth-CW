@@ -541,18 +541,37 @@ void displayUpdateTask(void * pvParameters) {
             // Performance Mode - different view modes
             if (localState.viewMode == 0) {
                 // === View Mode 0: Performance (Note + Waveform) ===
-                // 1. Left Side: Note and Volume
-                u8g2->setFont(u8g2_font_ncenB08_tr);
-                u8g2->setCursor(0, 20);
-                // Find first pressed key for display
-                int firstKey = -1;
-                if (!localState.pressedKeys.empty()) {
-                    firstKey = *localState.pressedKeys.begin();
-                }
-                if (firstKey >= 0) {
-                    u8g2->print(notes[firstKey % 12]);
-                } else {
+                // 1. Left Side: Pressed notes and Volume
+                uint8_t numKeys = localState.pressedKeyCount;
+                if (numKeys == 0) {
+                    u8g2->setFont(u8g2_font_ncenB08_tr);
+                    u8g2->setCursor(0, 20);
                     u8g2->print("-");
+                } else {
+                    // Build string of all pressed notes
+                    char noteStr[48] = "";
+                    size_t pos = 0;
+                    for (uint8_t i = 0; i < numKeys && i < MAX_PRESSED_KEYS; i++) {
+                        uint16_t key = localState.pressedKeys[i];
+                        const char* note = notes[key % 12];
+                        size_t len = strlen(note);
+                        if (pos + len + 1 < sizeof(noteStr)) {
+                            if (pos > 0) noteStr[pos++] = ' ';
+                            strcpy(&noteStr[pos], note);
+                            pos += len;
+                        }
+                    }
+
+                    // Select font based on number of keys
+                    if (numKeys <= 2) {
+                        u8g2->setFont(u8g2_font_ncenB08_tr);
+                    } else if (numKeys <= 4) {
+                        u8g2->setFont(u8g2_font_5x8_tr);
+                    } else {
+                        u8g2->setFont(u8g2_font_4x6_tr);
+                    }
+                    u8g2->setCursor(0, 20);
+                    u8g2->print(noteStr);
                 }
 
                 u8g2->setFont(u8g2_font_ncenB08_tr);
@@ -687,8 +706,8 @@ void displayUpdateTask(void * pvParameters) {
                 char buf[20];
                 // Find first pressed key for display
                 int scopeFirstKey = -1;
-                if (!localState.pressedKeys.empty()) {
-                    scopeFirstKey = *localState.pressedKeys.begin();
+                if (localState.pressedKeyCount > 0) {
+                    scopeFirstKey = localState.pressedKeys[0];
                 }
                 if (scopeFirstKey >= 0) {
                     sprintf(buf, "Key: %d", scopeFirstKey);

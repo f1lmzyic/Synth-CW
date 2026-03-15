@@ -1,89 +1,10 @@
 #include "hw.h"
 #include "constants.h"
+#include "navigation.h"
 #include "ui.h" // For uiHandleKnobRotation
 #include "dsp.h" // For dspUpdateParams
 
 TaskHandle_t scanKeysHandle = NULL;
-
-static struct {
-    bool downPressed = false;
-    bool upPressed = false;
-    int8_t xDirection = 0;
-    uint8_t consecutiveReads = 0;
-    uint32_t lastModeChange = 0;
-    uint32_t navCooldown = 0;
-} joystickState;
-
-static void handleJoystickNavigation(int16_t joyX, int16_t joyY, uint32_t now) {
-    // Mode cycling: Joystick DOWN moves to next mode
-    if (joyY > JOY_DOWN_THRESHOLD && !joystickState.downPressed) {
-        if (now - joystickState.lastModeChange > 300) {
-            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-            if (lock) {
-                // Cycle: Performance(0) -> Scope(1) -> Env(2) -> Menu(3)
-                uint8_t newMode = (sysState.viewMode + 1) % 4;
-                sysState.menuMode = (newMode == 3);
-                sysState.viewMode = newMode;
-            }
-            joystickState.downPressed = true;
-            joystickState.lastModeChange = now;
-        }
-    } else if (joyY <= JOY_DOWN_THRESHOLD - 100) {
-        joystickState.downPressed = false;
-    }
-
-    // Check menu mode
-    bool inMenu = false;
-    {
-        MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-        if (lock) {
-            inMenu = sysState.menuMode;
-        }
-    }
-
-    // Joystick UP in menu mode: exit to Performance
-    if (inMenu && joyY < JOY_UP_THRESHOLD && !joystickState.upPressed) {
-        if (now - joystickState.lastModeChange > 300) {
-            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-            if (lock) {
-                sysState.menuMode = false;
-                sysState.viewMode = 0;
-            }
-            joystickState.upPressed = true;
-            joystickState.lastModeChange = now;
-        }
-    } else if (joyY >= JOY_UP_THRESHOLD + 100) {
-        joystickState.upPressed = false;
-    }
-
-    // Page navigation within menu mode
-    if (inMenu) {
-        int8_t newXDir = 0;
-        if (joyX < JOY_CENTER_X - JOY_THRESHOLD) newXDir = -1;
-        else if (joyX > JOY_CENTER_X + JOY_THRESHOLD) newXDir = +1;
-
-        if (newXDir != 0 && newXDir == joystickState.xDirection) {
-            joystickState.consecutiveReads++;
-        } else {
-            joystickState.consecutiveReads = 0;
-        }
-        joystickState.xDirection = newXDir;
-
-        if (joystickState.consecutiveReads >= 3 && now > joystickState.navCooldown) {
-            MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-            if (lock) {
-                if (joystickState.xDirection < 0 && sysState.activePage > 0) {
-                    sysState.activePage = (MenuPage)(sysState.activePage - 1);
-                    joystickState.navCooldown = now + 200;
-                } else if (joystickState.xDirection > 0 && sysState.activePage < PAGE_COUNT - 1) {
-                    sysState.activePage = (MenuPage)(sysState.activePage + 1);
-                    joystickState.navCooldown = now + 200;
-                }
-            }
-            joystickState.consecutiveReads = 0;
-        }
-    }
-}
 
 // ============================================================================
 // Multi-keyboard connection handling
@@ -100,13 +21,13 @@ static void handleConnectionChange(bool westIn, bool eastIn, uint32_t now) {
         if (!westIn && sysState.prevWestIn) {
             // Left neighbor disconnected - clear keys from left keyboards
             uint16_t maxKeyToRemove = sysState.keyboardId * KEYS_PER_KEYBOARD;
-            for (auto it = sysState.pressedKeys.begin(); it != sysState.pressedKeys.end(); ) {
-                if (*it < maxKeyToRemove) {
-                    it = sysState.pressedKeys.erase(it);
-                } else {
-                    ++it;
+            uint8_t writeIdx = 0;
+            for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
+                if (sysState.pressedKeys[i] >= maxKeyToRemove) {
+                    sysState.pressedKeys[writeIdx++] = sysState.pressedKeys[i];
                 }
             }
+            sysState.pressedKeyCount = writeIdx;
         }
     }
 
@@ -301,7 +222,7 @@ void scanKeysTask(void *pvParameters) {
         }
 
         // Joystick navigation
-        handleJoystickNavigation(analogRead(JOYX_PIN), analogRead(JOYY_PIN), millis());
+        navUpdate(analogRead(JOYX_PIN), analogRead(JOYY_PIN));
 
         // Update global state
         {

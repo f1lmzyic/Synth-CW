@@ -1,8 +1,11 @@
 #pragma once
 #include <Arduino.h>
 #include <bitset>
-#include <set>
 #include <STM32FreeRTOS.h>
+
+// Maximum number of keys that can be tracked simultaneously
+// Supports up to 3 connected keyboards (3 * 12 = 36 keys)
+#define MAX_PRESSED_KEYS 36
 
 class MutexGuard {
 public:
@@ -152,7 +155,8 @@ struct SystemState {
     // ============================================================================
     // Polyphonic key state - supports multiple simultaneous key presses
     // ============================================================================
-    std::set<uint16_t> pressedKeys;                  // Set of pressed keys (keyboardId * 12 + keyIndex)
+    uint16_t pressedKeys[MAX_PRESSED_KEYS];          // Array of pressed keys (0xFFFF = unused)
+    uint8_t pressedKeyCount;                         // Number of currently pressed keys
     volatile uint8_t keyboardId;                     // This keyboard's ID (0, 1, 2, ...)
 
     // Patch management

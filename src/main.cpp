@@ -64,11 +64,29 @@ void CAN_TX_ISR() {
             memcpy(sysState.RX_Message, RX_Message, 8);
 
             if (msgType == 'P') {
-                // Key press - add to pressed keys set
-                sysState.pressedKeys.insert(globalKey);
+                // Key press - add to pressed keys array if not already present
+                bool found = false;
+                for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
+                    if (sysState.pressedKeys[i] == globalKey) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && sysState.pressedKeyCount < MAX_PRESSED_KEYS) {
+                    sysState.pressedKeys[sysState.pressedKeyCount++] = globalKey;
+                }
             } else if (msgType == 'R') {
-                // Key release - remove from pressed keys set
-                sysState.pressedKeys.erase(globalKey);
+                // Key release - remove from pressed keys array
+                for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
+                    if (sysState.pressedKeys[i] == globalKey) {
+                        // Shift remaining keys down
+                        for (uint8_t j = i; j < sysState.pressedKeyCount - 1; j++) {
+                            sysState.pressedKeys[j] = sysState.pressedKeys[j + 1];
+                        }
+                        sysState.pressedKeyCount--;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -165,7 +183,8 @@ void setup() {
     sysState.lastConnectionChangeTime = 0;
 
     // Initialize polyphony state
-    sysState.pressedKeys.clear();
+    sysState.pressedKeyCount = 0;
+    memset(sysState.pressedKeys, 0xFF, sizeof(sysState.pressedKeys));
 
     dspInit();
 
