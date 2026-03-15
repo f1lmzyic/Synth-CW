@@ -73,7 +73,6 @@ enum MenuPage {
   PAGE_MOD_EXT,
   PAGE_FX,
   PAGE_FX_EXT,
-  PAGE_PATCH, // Patch management page
   PAGE_COUNT
 };
 
@@ -161,10 +160,6 @@ struct SystemState {
   uint8_t pressedKeyCount;           // Number of currently pressed keys
   volatile uint8_t keyboardId;       // This keyboard's ID (0, 1, 2, ...)
   int8_t octaveOffset;               // Octave offset (-2 to +2) for this module
-
-  // Patch management
-  uint8_t currentPatchSlot; // Currently loaded patch (0-15)
-  bool patchDirty;          // True if current patch has unsaved changes
 
   uint8_t RX_Message[8];
   int16_t

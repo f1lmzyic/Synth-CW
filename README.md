@@ -36,11 +36,6 @@ Inspired by classic analog and digital synthesizers like the Moog Ladder, Korg M
 *   **Decimator (Sample Rate Reduction)**: Artificially drops the sample rate by holding the DSP output over several cycles, introducing aliasing and digital "ring".
 *   **Bitcrusher**: Destructively shifts the 8-bit output down to as low as 1-bit resolution for extreme lo-fi crunch and digital distortion.
 
-## Patch Memory System
-*   **16 Patch Slots**: Store and recall complete synth presets in flash memory
-*   **Patch Management Page**: Dedicated menu page for save/load/init operations
-*   **Dirty Flag Indicator**: Visual feedback when current patch has unsaved changes
-
 ## Enhanced Display Modes
 Long-press the joystick (1 second) to cycle through view modes:
 
@@ -70,7 +65,6 @@ Navigate using the Joystick (L/R) and edit with the four rotary knobs:
 *   `S&H`: S&H Depth | S&H Target | *Empty* | *Empty*
 *   `FX`: Delay Time | Delay Fbk | Delay Mix | Hard Sync Toggle
 *   `CHO`: Chorus Rate | Chorus Depth | Chorus Mix | Bitcrusher Lvl
-*   `PATCH`: Slot Select | Load | Save | Init
 
 ## System Architecture
 
@@ -81,7 +75,6 @@ The monolithic codebase has been restructured into a scalable C++ project:
 *   **`include/ui.h` / `src/ui.cpp` / `src/ui_helpers.cpp`**: Manages the OLED display drawing via U8g2 and processes rotary knob rotations to update the correct DSP parameters. Runs in the 100ms `displayUpdateTask`. Uses `ui_helpers.cpp` and `sine_lut.h` for waveform visualization.
 *   **`include/dsp.h` / `src/dsp.cpp`**: The core sound engine. Runs entirely within the 22kHz `AudioISR` timer interrupt. Uses lock-free parameter buffering to ensure no audio dropouts occur while navigating the menu.
 *   **`include/globals.h` / `include/constants.h`**: Defines the shared `sysState` structures, hardware pins, and concurrency primitives (Mutexes) used for IPC between tasks.
-*   **`include/patch_memory.h` / `src/patch_memory.cpp`**: Patch memory management for storing/loading presets from STM32 flash memory. Handles CRC validation and thread-safe flash operations.
 
 ## Building and Flashing
 

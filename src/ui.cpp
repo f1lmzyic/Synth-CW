@@ -1,7 +1,6 @@
 #include "ui.h"
 #include "constants.h"
 #include "hw.h"
-#include "patch_memory.h"
 
 U8G2_SSD1305_128X32_ADAFRUIT_F_HW_I2C *u8g2;
 
@@ -319,38 +318,6 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
           sysState.params.bitcrushDepth = val;
         }
         break;
-      case PAGE_PATCH:
-        if (knobIndex == 0) {
-          // Select patch slot (0-15)
-          int16_t val = sysState.currentPatchSlot + direction;
-          if (val < 0)
-            val = 0;
-          if (val > 15)
-            val = 15;
-          sysState.currentPatchSlot = val;
-          sysState.patchDirty = true; // Mark as dirty when changing
-        } else if (knobIndex == 1) {
-          // Load patch (short press simulation via knob turn)
-          if (direction != 0) {
-            patchLoad(sysState.currentPatchSlot);
-            sysState.patchDirty = false;
-          }
-        } else if (knobIndex == 2) {
-          // Save patch
-          if (direction > 0) {
-            static char patchName[15];
-            sprintf(patchName, "Patch %02d    ", sysState.currentPatchSlot);
-            patchSave(sysState.currentPatchSlot, patchName);
-            sysState.patchDirty = false;
-          }
-        } else if (knobIndex == 3) {
-          // Initialize patch (reset to defaults)
-          if (direction > 0) {
-            patchLoadDefault();
-            sysState.patchDirty = true;
-          }
-        }
-        break;
       default:
         break;
       }
@@ -365,7 +332,7 @@ void displayUpdateTask(void *pvParameters) {
                                 "F#", "G",  "G#", "A",  "A#", "B"};
   static const char *pageNames[] = {"OSC", "OSC2", "FLT",  "MODEL",
                                     "ENV", "MOD",  "MENV", "S&H",
-                                    "FX",  "CHO",  "PATCH"};
+                                    "FX",  "CHO"};
 
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -596,40 +563,6 @@ void displayUpdateTask(void *pvParameters) {
         u8g2->print(buf);
         u8g2->setCursor(72, 24);
         sprintf(buf, "Crush: %d", localState.params.bitcrushDepth);
-        u8g2->print(buf);
-        break;
-      }
-      case PAGE_PATCH: {
-        // Patch management page
-        drawHighlight(0, 0, 16);
-        drawHighlight(1, 0, 24);
-        drawHighlight(2, 64, 16);
-        drawHighlight(3, 64, 24);
-
-        u8g2->setCursor(8, 16);
-        sprintf(buf, "Slot: %02d", localState.currentPatchSlot);
-        u8g2->print(buf);
-
-        u8g2->setCursor(8, 24);
-        const char *patchName = patchGetName(localState.currentPatchSlot);
-        if (patchName[0] != '\0') {
-          sprintf(buf, "Name: %s", patchName);
-        } else {
-          sprintf(buf, "Name: (empty)");
-        }
-        u8g2->print(buf);
-
-        u8g2->setCursor(72, 16);
-        sprintf(buf, "Load: K1");
-        u8g2->print(buf);
-
-        u8g2->setCursor(72, 24);
-        sprintf(buf, "Save: K2");
-        u8g2->print(buf);
-
-        u8g2->setCursor(8, 32);
-        sprintf(buf, "Init: K3  Dirty: %s",
-                localState.patchDirty ? "Yes" : "No");
         u8g2->print(buf);
         break;
       }

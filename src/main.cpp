@@ -2,7 +2,6 @@
 #include "dsp.h"
 #include "globals.h"
 #include "hw.h"
-#include "patch_memory.h"
 #include "ui.h"
 #include <Arduino.h>
 #include <ES_CAN.h>
@@ -171,8 +170,6 @@ void setup() {
   // Init state
   sysState.menuMode = false;
   sysState.activePage = PAGE_OSC;
-  sysState.currentPatchSlot = 0;
-  sysState.patchDirty = false;
   sysState.viewMode = 0; // Default to performance view
   sysState.lastHandshakePos = -1;
   sysState.keyboardId = 0;   // Default keyboard ID
@@ -194,8 +191,6 @@ void setup() {
   dspInit();
 
   uiInit();
-
-  patchMemoryInit();
 
   msgInQ = xQueueCreate(36, 8);
   msgOutQ = xQueueCreate(36, 8);
