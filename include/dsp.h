@@ -1,14 +1,14 @@
 #pragma once
-#include <Arduino.h>
 #include "globals.h"
+#include <Arduino.h>
 
 // Include all modular DSP headers
-#include "voice_engine.h"
-#include "oscillators.h"
+#include "effects.h"
 #include "envelopes.h"
 #include "filters.h"
-#include "effects.h"
 #include "lfo_modulation.h"
+#include "oscillators.h"
+#include "voice_engine.h"
 
 // ============================================================================
 // DSP Core - Main orchestration module

@@ -1,47 +1,55 @@
 #pragma once
-#include <Arduino.h>
-#include <bitset>
 #include "constants.h"
 #include "globals.h"
+#include <Arduino.h>
+#include <bitset>
 
 // Rotary encoder knob class with quadrature decoding
 class Knob {
 public:
-    Knob() : m_prevState(0), m_lastDirection(0) {}
+  Knob() : m_prevState(0), m_lastDirection(0) {}
 
-    // Returns direction: -1, 0, or 1
-    int8_t update(uint8_t currentState) {
-        if (currentState == m_prevState) {
-            return 0;
-        }
-
-        int8_t direction = 0;
-        uint8_t transition = (m_prevState << 2) | currentState;
-
-        switch (transition) {
-            case 0b0100: case 0b1011: direction = 1; break;
-            case 0b0001: case 0b1110: direction = -1;  break;
-            // Handle missed transitions by continuing last direction
-            case 0b0011: case 0b1100:
-            case 0b0101: case 0b1010:
-                direction = m_lastDirection;
-                break;
-            default:
-                direction = 0;
-                break;
-        }
-
-        if (direction != 0) {
-            m_lastDirection = direction;
-        }
-        m_prevState = currentState;
-
-        return direction;
+  // Returns direction: -1, 0, or 1
+  int8_t update(uint8_t currentState) {
+    if (currentState == m_prevState) {
+      return 0;
     }
 
+    int8_t direction = 0;
+    uint8_t transition = (m_prevState << 2) | currentState;
+
+    switch (transition) {
+    case 0b0100:
+    case 0b1011:
+      direction = 1;
+      break;
+    case 0b0001:
+    case 0b1110:
+      direction = -1;
+      break;
+    // Handle missed transitions by continuing last direction
+    case 0b0011:
+    case 0b1100:
+    case 0b0101:
+    case 0b1010:
+      direction = m_lastDirection;
+      break;
+    default:
+      direction = 0;
+      break;
+    }
+
+    if (direction != 0) {
+      m_lastDirection = direction;
+    }
+    m_prevState = currentState;
+
+    return direction;
+  }
+
 private:
-    uint8_t m_prevState;
-    int8_t m_lastDirection;
+  uint8_t m_prevState;
+  int8_t m_lastDirection;
 };
 
 void hwInit();
@@ -53,4 +61,4 @@ std::bitset<4> readCols();
 extern TaskHandle_t scanKeysHandle;
 
 // Hardware tasks
-void scanKeysTask(void * pvParameters);
+void scanKeysTask(void *pvParameters);

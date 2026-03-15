@@ -50,8 +50,8 @@ const int16_t JOY_DOWN_THRESHOLD = 700;
 const int16_t JOY_UP_THRESHOLD = 300;
 
 // DSP constants
-const int32_t GLIDE_STEP_MIN = 500;       // Minimum glide step size
-const int32_t FILTER_Q_MIN = 8;           // Minimum Q value for filter stability
+const int32_t GLIDE_STEP_MIN = 500; // Minimum glide step size
+const int32_t FILTER_Q_MIN = 8;     // Minimum Q value for filter stability
 
 // Output multiplexer bits
 const int KNOB_MODE = 2;
@@ -61,5 +61,6 @@ const int HKOW_BIT = 5;
 const int HKOE_BIT = 6;
 
 // Multi-keyboard handshake timing (ms)
-const uint32_t HANDSHAKE_STARTUP_DELAY = 1000;   // Wait after boot before handshake
-const uint32_t HANDSHAKE_SETTLE_TIME = 200;      // Wait after connection change
+const uint32_t HANDSHAKE_STARTUP_DELAY =
+    1000;                                   // Wait after boot before handshake
+const uint32_t HANDSHAKE_SETTLE_TIME = 200; // Wait after connection change

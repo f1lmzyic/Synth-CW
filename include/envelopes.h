@@ -1,17 +1,11 @@
 #pragma once
-#include <Arduino.h>
 #include "globals.h"
+#include <Arduino.h>
 
 // ============================================================================
 // Envelope state machine - ADSR stages
 // ============================================================================
-enum EnvState {
-    ENV_IDLE = 0,
-    ENV_ATTACK,
-    ENV_DECAY,
-    ENV_SUSTAIN,
-    ENV_RELEASE
-};
+enum EnvState { ENV_IDLE = 0, ENV_ATTACK, ENV_DECAY, ENV_SUSTAIN, ENV_RELEASE };
 
 // ============================================================================
 // Per-voice envelope state (declared in voice_engine.h, accessed here)
@@ -32,11 +26,11 @@ void envelopeInit();
 
 // Process ADSR envelope for a single voice
 // Returns envelope value (0-255)
-uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams& params);
+uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params);
 
 // Process modulation envelope (attack/decay only)
 // Returns scaled envelope value for modulation target
-int32_t processModEnvelope(const SynthParams& params);
+int32_t processModEnvelope(const SynthParams &params);
 
 // Trigger release phase for a voice (called when key is released)
 void triggerEnvelopeRelease(uint8_t voiceIndex);
