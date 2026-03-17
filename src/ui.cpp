@@ -17,6 +17,22 @@ void uiInit() {
   setOutMuxBit(KNOB_MODE, HIGH);
 }
 
+int clamp(const int val, const int min, const int max) {
+  if (val < min)
+    return min;
+  if (val > max)
+    return max;
+  return val;
+}
+
+int cycle(const int val, const int min, const int max) {
+  if (val < min)
+    return max;
+  if (val > max)
+    return min;
+  return val;
+}
+
 // Modify parameter value
 void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
   MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
@@ -28,195 +44,73 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
     if (!sysState.menuMode) {
       // Performance mode knob assignments
       if (knobIndex == 0) {
-        // Knob 0: Master volume (0-8)
-        int16_t vol = sysState.params.masterVol + direction;
-        if (vol < 0)
-          vol = 0;
-        if (vol > 8)
-          vol = 8;
-        sysState.params.masterVol = vol;
+        sysState.params.masterVol = clamp(sysState.params.masterVol + direction, 0, 8);
       } else if (knobIndex == 1) {
-        // Knob 3: Octave offset (-2 to +2)
-        int16_t oct = sysState.octaveOffset + direction;
-        if (oct < -2)
-          oct = -2;
-        if (oct > 2)
-          oct = 2;
-        sysState.octaveOffset = oct;
+        sysState.octaveOffset = clamp(sysState.octaveOffset + direction, -2, 2);
       }
     } else {
       // Change parameter based on knob index and active page
       switch (sysState.activePage) {
       case PAGE_OSC:
         if (knobIndex == 0) {
-          int16_t val = sysState.params.osc1WaveMorph + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 255)
-            val = 255;
-          sysState.params.osc1WaveMorph = val;
+          sysState.params.osc1WaveMorph = clamp(sysState.params.osc1WaveMorph + (direction * 5), 0, 255);
         } else if (knobIndex == 1) {
-          int16_t val = sysState.params.osc2Wave + direction;
-          if (val < 0)
-            val = WAVEFORM_COUNT - 1;
-          if (val >= WAVEFORM_COUNT)
-            val = 0;
-          sysState.params.osc2Wave = (WaveformType)val;
+          sysState.params.osc2Wave = static_cast<WaveformType>(cycle(sysState.params.osc2Wave + direction, 0, WAVEFORM_COUNT - 1));
         } else if (knobIndex == 2) {
-          int16_t val = sysState.params.mixOsc2 + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 100)
-            val = 100;
-          sysState.params.mixOsc2 = val;
+          sysState.params.mixOsc2 = clamp(sysState.params.mixOsc2 + direction * 5, 0, 100);
         } else if (knobIndex == 3) {
-          int16_t val = sysState.params.osc2Detune + (direction * 2);
-          if (val < -50)
-            val = -50;
-          if (val > 50)
-            val = 50;
-          sysState.params.osc2Detune = val;
+          sysState.params.osc2Detune = clamp(sysState.params.osc2Detune + direction * 2, -50, 50);
         }
         break;
       case PAGE_OSC_EXT:
         if (knobIndex == 0) {
-          int16_t val = sysState.params.subOscMix + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 100)
-            val = 100;
-          sysState.params.subOscMix = val;
+          sysState.params.subOscMix = clamp(sysState.params.subOscMix + direction * 5, 0, 100);
         } else if (knobIndex == 1) {
-          int16_t val = sysState.params.noiseMix + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 100)
-            val = 100;
-          sysState.params.noiseMix = val;
+          sysState.params.noiseMix = clamp(sysState.params.noiseMix + direction * 5, 0, 100);
         } else if (knobIndex == 2) {
-          int16_t val = sysState.params.ringModMix + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 100)
-            val = 100;
-          sysState.params.ringModMix = val;
+          sysState.params.ringModMix = clamp(sysState.params.ringModMix + direction * 5, 0, 100);
         } else if (knobIndex == 3) {
-          int16_t val = sysState.params.wavefold + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.wavefold = val;
+          sysState.params.wavefold = clamp(sysState.params.wavefold + direction * 5, 0, 127);
         }
         break;
       case PAGE_FLT:
         if (knobIndex == 0) {
-          int16_t val = sysState.params.filterCutoff + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.filterCutoff = val;
+          sysState.params.filterCutoff = clamp(sysState.params.filterCutoff + direction * 5, 0, 127);
         } else if (knobIndex == 1) {
-          int16_t val = sysState.params.filterRes + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.filterRes = val;
+          sysState.params.filterRes = clamp(sysState.params.filterRes + direction * 5, 0, 127);
         } else if (knobIndex == 2) {
-          int16_t val = sysState.params.filterEnvDepth + (direction * 4);
-          if (val < -64)
-            val = -64;
-          if (val > 64)
-            val = 64;
-          sysState.params.filterEnvDepth = val;
+          sysState.params.filterEnvDepth = clamp(sysState.params.filterEnvDepth + direction * 4, -64, 64);
         } else if (knobIndex == 3) {
-          int16_t val = sysState.params.filterType + direction;
-          if (val < 0)
-            val = 3;
-          if (val > 3)
-            val = 0;
-          sysState.params.filterType = val;
+          sysState.params.filterType = cycle(sysState.params.filterType + direction, 0, 3);
         }
         break;
       case PAGE_ENV:
         if (knobIndex == 0) {
-          int16_t val = sysState.params.envAttack + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.envAttack = val;
+          sysState.params.envAttack = clamp(sysState.params.envAttack + direction * 5, 0, 127);
         } else if (knobIndex == 1) {
-          int16_t val = sysState.params.envDecay + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.envDecay = val;
+          sysState.params.envDecay = clamp(sysState.params.envDecay + direction * 5, 0, 127);
         } else if (knobIndex == 2) {
-          int16_t val = sysState.params.envSustain + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.envSustain = val;
+          sysState.params.envSustain = clamp(sysState.params.envSustain + direction * 5, 0, 127);
         } else if (knobIndex == 3) {
-          int16_t val = sysState.params.envRelease + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.envRelease = val;
+          sysState.params.envRelease = clamp(sysState.params.envRelease + direction * 5, 0, 127);
         }
         break;
       case PAGE_MOD:
         if (knobIndex == 0) {
-          int16_t val = sysState.params.lfoRate + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.lfoRate = val;
+          sysState.params.lfoRate = clamp(sysState.params.lfoRate + direction * 5, 0, 127);
         } else if (knobIndex == 1) {
-          int16_t val = sysState.params.lfoDepth + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.lfoDepth = val;
+          sysState.params.lfoDepth = clamp(sysState.params.lfoDepth + direction * 5, 0, 127);
         } else if (knobIndex == 3) {
-          int16_t val = sysState.params.glideTime + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.glideTime = val;
+          sysState.params.glideTime = clamp(sysState.params.glideTime + direction * 5, 0, 127);
         }
         break;
       case PAGE_FX:
         if (knobIndex == 0) {
-          int16_t val = sysState.params.delayTime + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.delayTime = val;
+          sysState.params.delayTime = clamp(sysState.params.delayTime + direction * 5, 0, 127);
         } else if (knobIndex == 1) {
-          int16_t val = sysState.params.delayFeedback + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.delayFeedback = val;
+          sysState.params.delayFeedback = clamp(sysState.params.delayFeedback + direction * 5, 0, 127);
         } else if (knobIndex == 2) {
-          int16_t val = sysState.params.delayMix + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.delayMix = val;
+          sysState.params.delayMix = clamp(sysState.params.delayMix + direction * 5, 0, 127);
         } else if (knobIndex == 3) {
           sysState.params.oscSync = (direction > 0);
         }
