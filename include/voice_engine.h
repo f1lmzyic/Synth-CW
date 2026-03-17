@@ -24,6 +24,7 @@ struct VoiceState {
   uint32_t phase;      // Current phase accumulator
   uint32_t step;       // Current step size (may be gliding)
   uint32_t targetStep; // Target step size after glide
+  uint32_t baseStep;   // Step size for this note before pitch bend
   int32_t envValue;    // Envelope value (fixed-point 8.8)
   uint16_t key;        // Assigned key (0xFFFF = unused)
   uint8_t envState;    // VoiceEnvState

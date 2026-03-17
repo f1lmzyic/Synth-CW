@@ -17,6 +17,17 @@
 // CAN loopback (true for single-board testing, false for real two-board link)
 #define CAN_LOOPBACK false
 
+// Set to true on the board connected to the power source (the "main" board).
+// Set to false on all satellite boards (left/right extension keyboards).
+// The main board:
+//   - produces audio output
+//   - processes all key events (own keys + CAN messages from satellites)
+// Satellite boards:
+//   - send key press/release events over CAN to the main board
+//   - their octave is determined by position relative to the main board
+//     (each position to the left = -1 octave, each position to the right = +1 octave)
+#define IS_MAIN_BOARD true
+
 // Sampling rate
 const uint32_t SAMPLE_RATE = 22000;
 

@@ -21,6 +21,12 @@ void triggerEnvelopeRelease(uint8_t voiceIndex) {
   }
 }
 
+void triggerModEnvelope() {
+  // Trigger mod envelope to start from attack
+  modEnvState = ENV_ATTACK;
+  modEnvValue = 1;
+}
+
 uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params) {
   if (voiceIndex >= POLYPHONY)
     return 0;

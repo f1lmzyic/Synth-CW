@@ -7,4 +7,5 @@ enum class ViewMode : uint8_t { Performance = 0, Scope, Envelope, Menu, Count };
 
 // Process joystick input and update menu/view state
 // Call this from the scan task each cycle
-void navUpdate(int16_t joyX, int16_t joyY);
+// When pitchBendActive is true, Y-axis navigation is disabled (used for pitch bend instead)
+void navUpdate(int16_t joyX, int16_t joyY, bool pitchBendActive = false);

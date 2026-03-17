@@ -3,6 +3,7 @@
 #include "dsp.h" // For dspUpdateParams
 #include "navigation.h"
 #include "ui.h" // For uiHandleKnobRotation
+#include "voice_engine.h" // For pitchBendValue
 
 TaskHandle_t scanKeysHandle = NULL;
 
@@ -12,7 +13,13 @@ TaskHandle_t scanKeysHandle = NULL;
 static void handleConnectionChange(bool westIn, bool eastIn, uint32_t now) {
   // Reset handshake state to allow re-negotiation
   sysState.eastOut = true;
-  sysState.lastHandshakePos = -1;
+  // Only clear our left-neighbor position if the LEFT side physically
+  // disconnected (westIn went true→false). When westIn goes false→true it
+  // means the left board finished its handshake — we want to KEEP the {H,N}
+  // CAN message we already received from it.
+  if (!westIn && sysState.prevWestIn) {
+    sysState.lastHandshakePos = -1;
+  }
   sysState.lastConnectionChangeTime = now;
 
   // Clear pressed keys from disconnected keyboards
@@ -39,8 +46,11 @@ static void handleConnectionChange(bool westIn, bool eastIn, uint32_t now) {
 // Perform handshake to determine keyboard position
 // ============================================================================
 static void performHandshake(bool westIn, bool eastIn) {
-  if (westIn)
-    return; // Wait for left neighbor to be ready
+  // Wait only if we have a physical west neighbor AND haven't yet received
+  // their {H} CAN message (lastHandshakePos still -1).  Once we receive their
+  // position we can proceed regardless of the westIn signal level.
+  if (westIn && sysState.lastHandshakePos < 0)
+    return;
 
   sysState.eastOut = false; // Signal right neighbor we're ready
 
@@ -59,8 +69,15 @@ static void performHandshake(bool westIn, bool eastIn) {
 
   // Broadcast position for right neighbor
   uint8_t pos = sysState.hasLeft ? sysState.lastHandshakePos + 1 : 0;
-  uint8_t TX_Message[8] = {'H', pos, 0, 0, 0, 0, 0, 0};
-  xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+  uint8_t hMsg[8] = {'H', pos, 0, 0, 0, 0, 0, 0};
+  xQueueSend(msgOutQ, hMsg, portMAX_DELAY);
+
+  // Main board immediately broadcasts its ID so satellites get their octave
+  // display without waiting for the periodic {M} cycle.
+  if (IS_MAIN_BOARD) {
+    uint8_t mMsg[8] = {'M', pos, 0, 0, 0, 0, 0, 0};
+    xQueueSend(msgOutQ, mMsg, portMAX_DELAY);
+  }
 }
 
 // ============================================================================
@@ -136,6 +153,7 @@ void scanKeysTask(void *pvParameters) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
 
   static Knob knobs[4];
+  static bool prevJoyButton = false;  // For pitch bend toggle
 
   while (true) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -179,6 +197,16 @@ void scanKeysTask(void *pvParameters) {
     localInputs[22] = cols5[2]; // Joystick S button
     localInputs[23] = cols5[3]; // West Input
     bool westIn = !cols5[3];
+    bool joyButton = !cols5[2]; // Joystick button pressed (active low)
+
+    // Toggle pitch bend on button press
+    if (joyButton && !prevJoyButton) {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        sysState.pitchBendEnabled = !sysState.pitchBendEnabled;
+      }
+    }
+    prevJoyButton = joyButton;
 
     // Read East input (row 6, col 3)
     setRow(6, sysState.eastOut);
@@ -206,6 +234,42 @@ void scanKeysTask(void *pvParameters) {
       keysPressed[i] = !localInputs[i];
     }
 
+    // All boards that have completed their handshake (eastOut=false) periodically
+    // re-broadcast {H, keyboardId} so any newly hot-plugged right-side board
+    // can receive the position info it needs to complete its own handshake.
+    // Uses a shared counter; right-side boards use max-wins update so the
+    // largest (nearest-left-neighbour) position always wins.
+    static uint8_t hBroadcastCounter = 0;
+    if (!sysState.eastOut && (sysState.hasLeft || sysState.hasRight)) {
+      if (++hBroadcastCounter >= 10) { // every 200 ms
+        hBroadcastCounter = 0;
+        uint8_t hMsg[8] = {'H', sysState.keyboardId, 0, 0, 0, 0, 0, 0};
+        xQueueSend(msgOutQ, hMsg, 0);
+      }
+    }
+
+    // Determine if this board acts as main (plays audio):
+    //   - IS_MAIN_BOARD=true always acts as main
+    //   - Any board acts as main when standalone (no CAN neighbours)
+    bool actAsMain = IS_MAIN_BOARD || (!sysState.hasLeft && !sysState.hasRight);
+
+    // If this board is the main board, periodically broadcast its ID so
+    // satellites can compute their relative octave for display.
+    if (actAsMain) {
+      // Keep mainKeyboardId in sync on the main board itself
+      sysState.mainKeyboardId = sysState.keyboardId;
+
+      // Send {M} every ~1 s (50 × 20 ms cycles) to avoid flooding the CAN bus
+      static uint8_t mBroadcastCounter = 0;
+      if (++mBroadcastCounter >= 5) { // every 100 ms
+        mBroadcastCounter = 0;
+        if (sysState.hasLeft || sysState.hasRight) {
+          uint8_t mMsg[8] = {'M', sysState.keyboardId, 0, 0, 0, 0, 0, 0};
+          xQueueSend(msgOutQ, mMsg, 0); // non-blocking; drop if queue full
+        }
+      }
+    }
+
     // Compare with previous state to detect changes and send messages
     for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
       if (keysPrevPressed[i] != keysPressed[i]) {
@@ -213,14 +277,13 @@ void scanKeysTask(void *pvParameters) {
         uint8_t TX_Message[8] = {
             msgType, (uint8_t)i, sysState.keyboardId, 0, 0, 0, 0, 0};
 
-        // Send on CAN if connected to other keyboards
-        if (sysState.hasLeft || sysState.hasRight) {
+        // Satellites send key events over CAN to the main board.
+        // The main board (or a standalone board) processes keys locally.
+        if (!actAsMain && (sysState.hasLeft || sysState.hasRight)) {
           xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
         }
 
-        // Process locally if this keyboard plays audio (rightmost or
-        // standalone) Rightmost = has no right neighbor
-        if (!sysState.hasRight) {
+        if (actAsMain) {
           xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
         }
 
@@ -228,8 +291,95 @@ void scanKeysTask(void *pvParameters) {
       }
     }
 
-    // Joystick navigation
-    navUpdate(analogRead(JOYX_PIN), analogRead(JOYY_PIN));
+    // ============================================================================
+    // Read pitch bend enabled state for navigation control
+    // ============================================================================
+    bool pbEnabled = false;
+    {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        pbEnabled = sysState.pitchBendEnabled;
+      }
+    }
+
+    // Joystick navigation (Y-axis disabled when pitch bend is active)
+    navUpdate(analogRead(JOYX_PIN), analogRead(JOYY_PIN), pbEnabled);
+
+    // ============================================================================
+    // Read joystick for pitch bend (Y-axis) - incremental/relative control
+    // Center = hold current pitch, Up = bend up, Down = bend down
+    // Range: ±2 semitones (200 cents) with smooth increments
+    // Toggle with joystick button
+    // ============================================================================
+    {
+      // Static variable to track current pitch bend in cents (-200 to +200)
+      static int16_t currentBendCents = 0;
+      static uint32_t lastUpdateMs = 0;
+
+      int16_t joyY = analogRead(JOYY_PIN);
+      int16_t joyCenter = JOY_CENTER_Y;
+      int16_t threshold = JOY_THRESHOLD;
+
+      uint8_t newPitchBend = PITCH_BEND_CENTER;
+      int8_t bendSemitones = 0;
+
+      if (pbEnabled) {
+        uint32_t now = millis();
+        
+        // Rate limit: update every 50ms for smooth gradual control
+        if (now - lastUpdateMs > 50) {
+          lastUpdateMs = now;
+          
+          // Calculate how far joystick is pushed from center
+          int16_t joyDelta = 0;
+          if (joyY < joyCenter - threshold) {
+            // Pushed down - bend down
+            joyDelta = joyY - (joyCenter - threshold);  // negative value
+          } else if (joyY > joyCenter + threshold) {
+            // Pushed up - bend up
+            joyDelta = joyY - (joyCenter + threshold);   // positive value
+          }
+          
+          // Scale: max deflection (~350) maps to max bend rate
+          // Small deflection = slower bend, large deflection = faster bend
+          int16_t bendRate = joyDelta / 35;  // -10 to +10 cents per 50ms
+          
+          // Apply bend
+          currentBendCents += bendRate;
+          
+          // Clamp to ±200 cents (±2 semitones)
+          if (currentBendCents < -200) currentBendCents = -200;
+          if (currentBendCents > 200) currentBendCents = 200;
+        }
+        
+        // Convert cents to bend value (128 = center, 0 = -2 semitones, 255 = +2 semitones)
+        // 200 cents = +2 semitones = +128 from center
+        // 1 cent = 128/200 = 0.64 units
+        int16_t rawBend = PITCH_BEND_CENTER + (currentBendCents * 128 / 200);
+        if (rawBend < 0) rawBend = 0;
+        if (rawBend > 255) rawBend = 255;
+        newPitchBend = static_cast<uint8_t>(rawBend);
+        
+        // For UI display: convert cents to semitones (rounded)
+        bendSemitones = (currentBendCents + 50) / 100;  // Round to nearest semitone
+      } else {
+        // Pitch bend disabled - reset to center
+        currentBendCents = 0;
+        newPitchBend = PITCH_BEND_CENTER;
+        bendSemitones = 0;
+      }
+
+      // Atomic store for thread safety (ISR reads this)
+      noInterrupts();
+      pitchBendValue = newPitchBend;
+      interrupts();
+
+      // Store for UI display
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        sysState.displayPitchBend = bendSemitones;
+      }
+    }
 
     // Update global state
     {

@@ -2,146 +2,88 @@
 #include "constants.h"
 
 static constexpr uint32_t INITIAL_DELAY_MS = 300;
-static constexpr uint32_t REPEAT_DELAY_MS = 150;
-static constexpr uint8_t CONSECUTIVE_READS_REQUIRED = 3;
-static constexpr int16_t JOYSTICK_HYSTERESIS = 100;
-static constexpr TickType_t MUTEX_TIMEOUT = pdMS_TO_TICKS(5);
+static constexpr uint32_t REPEAT_DELAY_MS  = 250;
+static constexpr int16_t  JOY_DEADBAND     = 150;
+static constexpr TickType_t MUTEX_TIMEOUT  = pdMS_TO_TICKS(5);
 
-// Joystick navigation state
-struct JoystickState {
-  int8_t xDirection = 0;
-  uint8_t consecutiveX = 0;
-  bool isUpActive = false;
-  bool isDownActive = false;
-  bool isPageActive = false;
-  uint32_t nextUpRepeatMs = 0;
-  uint32_t nextDownRepeatMs = 0;
-  uint32_t nextPageRepeatMs = 0;
+struct AxisState {
+  int8_t  dir    = 0;
+  bool    fired  = false;
+  uint32_t nextMs = 0;
 };
 
-static JoystickState joy;
+static AxisState axisX, axisY;
 
-// Helper to calculate next repeat time
-static inline uint32_t calcNextRepeat(uint32_t now, bool isFirstPress) {
-  return now + (isFirstPress ? INITIAL_DELAY_MS : REPEAT_DELAY_MS);
+// Returns -1, 0, or +1 relative to joystick center
+static int8_t joyDir(int16_t val, int16_t center) {
+  if (val < center - JOY_DEADBAND) return -1;
+  if (val > center + JOY_DEADBAND) return +1;
+  return 0;
 }
 
-static bool tryNavigatePage(int8_t direction, bool &outIsMenuMode) {
-  MutexGuard lock(sysState.mutex, MUTEX_TIMEOUT);
-  if (!lock) {
-    outIsMenuMode = false;
-    return false;
+// Horizontal: auto-enter menu and navigate pages left/right
+static void handleX(int8_t dir, uint32_t now) {
+  if (dir != axisX.dir) {
+    axisX.dir   = dir;
+    axisX.fired = false;
   }
+  if (dir == 0) return;
 
-  outIsMenuMode = (sysState.viewMode == static_cast<uint8_t>(ViewMode::Menu));
-  if (!outIsMenuMode)
-    return false;
-
-  int newPage = static_cast<int>(sysState.activePage) + direction;
-  if (newPage < 0 || newPage >= PAGE_COUNT)
-    return false;
-
-  sysState.activePage = static_cast<MenuPage>(newPage);
-  return true;
-}
-
-static void cycleViewMode(int8_t direction) {
-  MutexGuard lock(sysState.mutex, MUTEX_TIMEOUT);
-  if (!lock)
-    return;
-
-  int newMode = static_cast<int>(sysState.viewMode) + direction;
-  constexpr int count = static_cast<int>(ViewMode::Count);
-
-  // Wrap around using modulo
-  newMode = ((newMode % count) + count) % count;
-
-  sysState.viewMode = static_cast<uint8_t>(newMode);
-  sysState.menuMode = (newMode == static_cast<int>(ViewMode::Menu));
-}
-
-static void handleVerticalNav(int16_t joyY, uint32_t now) {
-  // DOWN: cycle to next view mode (with repeat)
-  if (joyY > JOY_DOWN_THRESHOLD) {
-    if (now >= joy.nextDownRepeatMs) {
-      bool isFirst = !joy.isDownActive;
-      joy.isDownActive = true;
-      cycleViewMode(+1);
-      joy.nextDownRepeatMs = calcNextRepeat(now, isFirst);
+  if (!axisX.fired || now >= axisX.nextMs) {
+    MutexGuard lock(sysState.mutex, MUTEX_TIMEOUT);
+    if (lock) {
+      if (!sysState.menuMode) {
+        sysState.menuMode = true;
+        sysState.viewMode = static_cast<uint8_t>(ViewMode::Menu);
+      }
+      int newPage = static_cast<int>(sysState.activePage) + dir;
+      if (newPage < 0)           newPage = 0;
+      if (newPage >= PAGE_COUNT) newPage = PAGE_COUNT - 1;
+      sysState.activePage = static_cast<MenuPage>(newPage);
     }
-  } else if (joyY <= JOY_DOWN_THRESHOLD - JOYSTICK_HYSTERESIS) {
-    joy.isDownActive = false;
-    joy.nextDownRepeatMs = 0;
-  }
-
-  // UP: cycle to previous view mode (with repeat)
-  if (joyY < JOY_UP_THRESHOLD) {
-    if (now >= joy.nextUpRepeatMs) {
-      bool isFirst = !joy.isUpActive;
-      joy.isUpActive = true;
-      cycleViewMode(-1);
-      joy.nextUpRepeatMs = calcNextRepeat(now, isFirst);
-    }
-  } else if (joyY >= JOY_UP_THRESHOLD + JOYSTICK_HYSTERESIS) {
-    joy.isUpActive = false;
-    joy.nextUpRepeatMs = 0;
+    axisX.nextMs = now + (axisX.fired ? REPEAT_DELAY_MS : INITIAL_DELAY_MS);
+    axisX.fired  = true;
   }
 }
 
-static void handleHorizontalNav(int16_t joyX, uint32_t now) {
-  int8_t newDir = 0;
-  if (joyX < JOY_CENTER_X - JOY_THRESHOLD - JOYSTICK_HYSTERESIS) {
-    newDir = -1;
-  } else if (joyX > JOY_CENTER_X + JOY_THRESHOLD + JOYSTICK_HYSTERESIS) {
-    newDir = +1;
-  } else if (joyX > JOY_CENTER_X - JOY_THRESHOLD &&
-             joyX < JOY_CENTER_X + JOY_THRESHOLD) {
-    // In dead zone - reset state
-    joy.xDirection = 0;
-    joy.consecutiveX = 0;
-    joy.isPageActive = false;
-    joy.nextPageRepeatMs = 0;
-    return;
-  } else {
-    // In hysteresis zone - maintain current direction
-    newDir = joy.xDirection;
+// Vertical: exit menu → performance, or cycle performance views
+static void handleY(int8_t dir, uint32_t now) {
+  if (dir != axisY.dir) {
+    axisY.dir   = dir;
+    axisY.fired = false;
   }
+  if (dir == 0) return;
 
-  if (newDir == 0) {
-    joy.consecutiveX = 0;
-    joy.isPageActive = false;
-    joy.nextPageRepeatMs = 0;
-    joy.xDirection = 0;
-    return;
-  }
-
-  if (newDir == joy.xDirection) {
-    if (joy.consecutiveX < UINT8_MAX) {
-      joy.consecutiveX++;
+  if (!axisY.fired || now >= axisY.nextMs) {
+    MutexGuard lock(sysState.mutex, MUTEX_TIMEOUT);
+    if (lock) {
+      if (sysState.menuMode) {
+        sysState.menuMode = false;
+        sysState.viewMode = static_cast<uint8_t>(ViewMode::Performance);
+      } else {
+        constexpr int nonMenuViews = static_cast<int>(ViewMode::Menu); // 3
+        int newMode = (static_cast<int>(sysState.viewMode) + dir + nonMenuViews) % nonMenuViews;
+        sysState.viewMode = static_cast<uint8_t>(newMode);
+      }
     }
-  } else {
-    joy.consecutiveX = 1;
-    joy.isPageActive = false;
-    joy.nextPageRepeatMs = 0;
-  }
-  joy.xDirection = newDir;
-
-  if (joy.consecutiveX >= CONSECUTIVE_READS_REQUIRED &&
-      now >= joy.nextPageRepeatMs) {
-    bool isMenuMode;
-    if (tryNavigatePage(joy.xDirection, isMenuMode)) {
-      bool isFirst = !joy.isPageActive;
-      joy.isPageActive = true;
-      joy.nextPageRepeatMs = calcNextRepeat(now, isFirst);
-    } else if (!isMenuMode) {
-      // Not in menu mode, don't keep trying
-      joy.nextPageRepeatMs = UINT32_MAX;
-    }
+    axisY.nextMs = now + (axisY.fired ? REPEAT_DELAY_MS : INITIAL_DELAY_MS);
+    axisY.fired  = true;
   }
 }
 
-void navUpdate(int16_t joyX, int16_t joyY) {
+void navUpdate(int16_t joyX, int16_t joyY, bool pitchBendActive) {
   uint32_t now = millis();
-  handleVerticalNav(joyY, now);
-  handleHorizontalNav(joyX, now);
+  
+  // When pitch bend is active, disable ALL navigation (X and Y axes)
+  if (!pitchBendActive) {
+    handleX(joyDir(joyX, JOY_CENTER_X), now);
+    handleY(joyDir(joyY, JOY_CENTER_Y), now);
+  } else {
+    // Reset both axes so navigation doesn't fire stale events
+    // the moment pitch bend is toggled off while joystick is still deflected
+    axisX.dir   = 0;
+    axisX.fired = false;
+    axisY.dir   = 0;
+    axisY.fired = false;
+  }
 }

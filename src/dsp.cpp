@@ -31,6 +31,11 @@ void dspInit() {
   localParams.modEnvDecay = 40;
   localParams.lfoRate = 20;
   localParams.masterVol = 6;
+  // Subtle defaults (effects disabled by default, but LFO/mod env have some depth)
+  localParams.lfoDepth = 15;
+  localParams.lfoTarget = 1;  // Default: LFO modulates filter cutoff
+  localParams.modEnvAmount = 20;
+  // Keep effects at 0 (disabled) - user can enable via UI knobs
   smoothCutoff = localParams.filterCutoff;
   smoothVol = localParams.masterVol;
 

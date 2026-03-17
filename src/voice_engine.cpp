@@ -1,6 +1,11 @@
 #include "voice_engine.h"
+#include "envelopes.h"
 #include "constants.h"
+#include "globals.h"
 #include <Arduino.h>
+
+// Pitch bend value (0-255, 128 = no bend)
+volatile uint8_t pitchBendValue = PITCH_BEND_CENTER;
 
 // ============================================================================
 // Voice state - single array of structs (better cache locality)
@@ -18,6 +23,8 @@ static const uint32_t baseStepSizes[] = {
 // ============================================================================
 // Public Interface Implementation
 // ============================================================================
+// Public Interface Implementation
+// ============================================================================
 
 void voiceEngineInit(void) {
   // Initialize each voice to default state (safe during init before ISR starts)
@@ -25,6 +32,7 @@ void voiceEngineInit(void) {
     voices[v].phase = 0;
     voices[v].step = 0;
     voices[v].targetStep = 0;
+    voices[v].baseStep = 0;
     voices[v].envValue = 0;
     voices[v].key = 0xFFFF; // Marks unused
     voices[v].envState = VOICE_ENV_IDLE;
@@ -52,6 +60,46 @@ static int8_t findVoiceForKey(uint16_t key) {
   return -1;
 }
 
+// ============================================================================
+// Pitch Bend Implementation
+// Uses cents for smooth incremental pitch bend
+// ============================================================================
+
+// Apply pitch bend to a step size using cents
+// bendValue: 0-255, where 128 = no bend (0 cents)
+// Returns step size multiplied by pitch bend ratio
+uint32_t applyPitchBend(uint32_t stepSize, uint8_t bendValue) {
+  if (bendValue == PITCH_BEND_CENTER) {
+    return stepSize;
+  }
+
+  // Calculate cents offset from center
+  // 128 = 0 cents, 0 = -128 cents, 255 = +127 cents
+  // Scale to ±200 cents (max ±2 semitones)
+  int16_t centsOffset;
+  if (bendValue < PITCH_BEND_CENTER) {
+    centsOffset = -((PITCH_BEND_CENTER - bendValue) * 200 / PITCH_BEND_CENTER);
+  } else {
+    centsOffset = ((bendValue - PITCH_BEND_CENTER) * 200 / (255 - PITCH_BEND_CENTER));
+  }
+
+  // Clamp to ±200 cents
+  if (centsOffset < -200) centsOffset = -200;
+  if (centsOffset > 200) centsOffset = 200;
+
+  // Convert cents to multiplier using 2^(cents/1200)
+  // Use linear approximation: ratio ≈ 1 + cents * ln(2) / 1200
+  // ln(2)/1200 ≈ 0.00057735
+  // In Q16.16: multiplier = 65536 + cents * 37.85
+  // Using 38 for slight overcorrection which sounds better
+  
+  uint32_t multiplier = 0x10000 + (centsOffset * 38);
+  
+  // Apply to step size
+  uint64_t result = (static_cast<uint64_t>(stepSize) * multiplier) >> 16;
+  return static_cast<uint32_t>(result);
+}
+
 uint32_t voiceEngineGetStepSizeForMidiNote(int note) {
   if (note < 0)
     return 0;
@@ -66,6 +114,7 @@ uint32_t voiceEngineGetStepSizeForMidiNote(int note) {
   } else if (octave < 0) {
     stepSize >>= (-octave);
   }
+
   return stepSize;
 }
 
@@ -114,15 +163,31 @@ void voiceEngineUpdateParams(void) {
     voices[freeVoice].envValue = 0;
     voices[freeVoice].envState = VOICE_ENV_ATTACK;
 
-    // Calculate step size (apply octave offset from UI)
+    // Trigger modulation envelope when note is played
+    triggerModEnvelope();
+
+    // Calculate step size.
+    // Octave is relative to the main board's position (mainKeyboardId):
+    //   boards to the left  → negative offset → lower pitch
+    //   boards to the right → positive offset → higher pitch
     uint16_t keyboardId = key / KEYS_PER_KEYBOARD;
     uint8_t keyInKeyboard = key % KEYS_PER_KEYBOARD;
+    int octaveRelative = (int)keyboardId - (int)sysState.mainKeyboardId;
     int midiNote =
-        (4 + keyboardId + sysState.octaveOffset) * 12 + keyInKeyboard;
-    voices[freeVoice].targetStep = voiceEngineGetStepSizeForMidiNote(midiNote);
+        (4 + octaveRelative + sysState.octaveOffset) * 12 + keyInKeyboard;
+    voices[freeVoice].baseStep = voiceEngineGetStepSizeForMidiNote(midiNote);
+    voices[freeVoice].targetStep = applyPitchBend(voices[freeVoice].baseStep, pitchBendValue);
 
     if (sysState.params.glideTime == 0) {
       voices[freeVoice].step = voices[freeVoice].targetStep;
+    }
+  }
+
+  // Step 3: Reapply current pitch bend to all active voices so that moving
+  // the bend wheel while holding notes actually changes their pitch.
+  for (int v = 0; v < POLYPHONY; v++) {
+    if (voices[v].active) {
+      voices[v].targetStep = applyPitchBend(voices[v].baseStep, pitchBendValue);
     }
   }
 }

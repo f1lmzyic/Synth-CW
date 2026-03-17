@@ -66,13 +66,9 @@ enum MenuPage {
   PAGE_OSC = 0,
   PAGE_OSC_EXT,
   PAGE_FLT,
-  PAGE_FLT_MODEL,
   PAGE_ENV,
   PAGE_MOD,
-  PAGE_MOD_ENV,
-  PAGE_MOD_EXT,
   PAGE_FX,
-  PAGE_FX_EXT,
   PAGE_COUNT
 };
 
@@ -159,6 +155,7 @@ struct SystemState {
       pressedKeys[MAX_PRESSED_KEYS]; // Array of pressed keys (0xFFFF = unused)
   uint8_t pressedKeyCount;           // Number of currently pressed keys
   volatile uint8_t keyboardId;       // This keyboard's ID (0, 1, 2, ...)
+  uint8_t mainKeyboardId;            // ID of the board playing audio (set via CAN)
   int8_t octaveOffset;               // Octave offset (-2 to +2) for this module
 
   uint8_t RX_Message[8];
@@ -174,6 +171,10 @@ struct SystemState {
   bool prevEastIn;
   bool eastOut;
   uint32_t lastConnectionChangeTime;
+
+  // Pitch bend for UI display (read-only, set by hw.cpp)
+  int8_t displayPitchBend;
+  bool pitchBendEnabled;
 };
 
 // Extern declaration for the shared state
@@ -181,3 +182,14 @@ extern SystemState sysState;
 
 extern QueueHandle_t msgInQ;
 extern QueueHandle_t msgOutQ;
+
+// ============================================================================
+// Pitch Bend - Joystick Y-axis control
+// Thread-safe via atomic operations (shared between ISR and tasks)
+// Value: 0 = -2 semitones, 128 = center (no bend), 255 = +2 semitones
+// ============================================================================
+#define PITCH_BEND_CENTER 128
+#define PITCH_BEND_MAX 2   // Maximum bend in semitones (2 = ±2 semitones)
+extern volatile uint8_t pitchBendValue;
+
+uint32_t applyPitchBend(uint32_t stepSize, uint8_t bendValue);

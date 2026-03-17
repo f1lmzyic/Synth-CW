@@ -40,15 +40,30 @@ void CAN_TX_ISR() { xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL); }
     if (lock) {
       uint8_t msgType = RX_Message[0];
 
-      // Handshake messages processed by all keyboards (for position detection)
+      // Handshake messages: only update our left-neighbor position if we
+      // haven't completed our own handshake yet (eastOut still true).
+      // This prevents boards from corrupting their position when they receive
+      // {H} messages from boards to their RIGHT (which have higher IDs).
       if (msgType == 'H') {
-        sysState.lastHandshakePos = RX_Message[1];
+        // Max-wins: only update if received position is higher than current.
+        // Prevents left-satellite's {H,0} from overwriting main's {H,1}
+        // at a right-side board that receives periodic broadcasts from all boards.
+        if (sysState.eastOut && (int16_t)RX_Message[1] > sysState.lastHandshakePos) {
+          sysState.lastHandshakePos = RX_Message[1];
+        }
         continue;
       }
 
-      // Key messages only processed by rightmost keyboard (the one that plays
-      // audio) Rightmost = has no right neighbor
-      if (sysState.hasRight) {
+      // Main-board ID broadcast: all boards update so satellites know their
+      // relative octave for display
+      if (msgType == 'M') {
+        sysState.mainKeyboardId = RX_Message[1];
+        continue;
+      }
+
+      // Key messages only processed by the main board (or standalone board)
+      bool actAsMain = IS_MAIN_BOARD || (!sysState.hasLeft && !sysState.hasRight);
+      if (!actAsMain) {
         continue;
       }
 
@@ -173,6 +188,7 @@ void setup() {
   sysState.viewMode = 0; // Default to performance view
   sysState.lastHandshakePos = -1;
   sysState.keyboardId = 0;   // Default keyboard ID
+  sysState.mainKeyboardId = 0; // Default: board 0 is main
   sysState.octaveOffset = 0; // Default octave (middle C = C4)
 
   // Multi-keyboard: assume standalone until handshake determines otherwise
@@ -187,6 +203,10 @@ void setup() {
   // Initialize polyphony state
   sysState.pressedKeyCount = 0;
   memset(sysState.pressedKeys, 0xFF, sizeof(sysState.pressedKeys));
+
+  // Initialize pitch bend
+  sysState.pitchBendEnabled = false;  // Disabled by default
+  sysState.displayPitchBend = 0;
 
   dspInit();
 

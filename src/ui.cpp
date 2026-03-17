@@ -10,7 +10,6 @@ void uiInit() {
   setOutMuxBit(DRST_BIT, HIGH);
 
   // Allocate u8g2 dynamically after heap is ready to prevent static
-  // initialization faults
   u8g2 = new U8G2_SSD1305_128X32_ADAFRUIT_F_HW_I2C(U8G2_R0);
 
   u8g2->begin();
@@ -141,23 +140,6 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
           sysState.params.filterType = val;
         }
         break;
-      case PAGE_FLT_MODEL:
-        if (knobIndex == 0) {
-          int16_t val = sysState.params.filterModel + direction;
-          if (val < 0)
-            val = 2; // Wrap around to MS-20
-          if (val > 2)
-            val = 0; // Wrap around to Standard
-          sysState.params.filterModel = val;
-        } else if (knobIndex == 1) {
-          int16_t val = sysState.params.filterDrive + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.filterDrive = val;
-        }
-        break;
       case PAGE_ENV:
         if (knobIndex == 0) {
           int16_t val = sysState.params.envAttack + (direction * 5);
@@ -213,54 +195,6 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
           sysState.params.glideTime = val;
         }
         break;
-      case PAGE_MOD_ENV:
-        if (knobIndex == 0) {
-          int16_t val = sysState.params.modEnvAttack + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.modEnvAttack = val;
-        } else if (knobIndex == 1) {
-          int16_t val = sysState.params.modEnvDecay + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.modEnvDecay = val;
-        } else if (knobIndex == 2) {
-          int16_t val = sysState.params.modEnvAmount + (direction * 4);
-          if (val < -64)
-            val = -64;
-          if (val > 64)
-            val = 64;
-          sysState.params.modEnvAmount = val;
-        } else if (knobIndex == 3) {
-          int16_t val = sysState.params.modEnvTarget + direction;
-          if (val < 0)
-            val = 2;
-          if (val > 2)
-            val = 0;
-          sysState.params.modEnvTarget = val;
-        }
-        break;
-      case PAGE_MOD_EXT:
-        if (knobIndex == 0) {
-          int16_t val = sysState.params.shDepth + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.shDepth = val;
-        } else if (knobIndex == 1) {
-          int16_t val = sysState.params.shTarget + direction;
-          if (val < 0)
-            val = 1;
-          if (val > 1)
-            val = 0;
-          sysState.params.shTarget = val;
-        }
-        break;
       case PAGE_FX:
         if (knobIndex == 0) {
           int16_t val = sysState.params.delayTime + (direction * 5);
@@ -287,37 +221,6 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
           sysState.params.oscSync = (direction > 0);
         }
         break;
-      case PAGE_FX_EXT:
-        if (knobIndex == 0) {
-          int16_t val = sysState.params.chorusRate + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.chorusRate = val;
-        } else if (knobIndex == 1) {
-          int16_t val = sysState.params.chorusDepth + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 127)
-            val = 127;
-          sysState.params.chorusDepth = val;
-        } else if (knobIndex == 2) {
-          int16_t val = sysState.params.chorusMix + (direction * 5);
-          if (val < 0)
-            val = 0;
-          if (val > 100)
-            val = 100;
-          sysState.params.chorusMix = val;
-        } else if (knobIndex == 3) {
-          int16_t val = sysState.params.bitcrushDepth + direction;
-          if (val < 0)
-            val = 7;
-          if (val > 7)
-            val = 0;
-          sysState.params.bitcrushDepth = val;
-        }
-        break;
       default:
         break;
       }
@@ -330,9 +233,7 @@ void displayUpdateTask(void *pvParameters) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
   static const char *notes[] = {"C",  "C#", "D",  "D#", "E",  "F",
                                 "F#", "G",  "G#", "A",  "A#", "B"};
-  static const char *pageNames[] = {"OSC", "OSC2", "FLT",  "MODEL",
-                                    "ENV", "MOD",  "MENV", "S&H",
-                                    "FX",  "CHO"};
+  static const char *pageNames[] = {"OSC", "OSC2", "FLT", "ENV", "MOD", "FX"};
 
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -442,26 +343,37 @@ void displayUpdateTask(void *pvParameters) {
 
         break;
       }
-      case PAGE_FLT_MODEL: {
+      case PAGE_ENV: {
+        const uint8_t envX = 68;
+        const uint8_t envY = 10;
+        const uint8_t envW = 60;
+        const uint8_t envH = 20;
+
+        u8g2->drawFrame(envX, envY, envW, envH);
+
+        // Calculate envelope points
+        uint8_t attackX = envX + (localState.params.envAttack * envW) / 255;
+        uint8_t decayX =
+            attackX + (localState.params.envDecay * (envW - attackX)) / 255;
+        uint8_t sustainY = envY + envH - ((localState.params.envSustain * envH) / 255);
+        uint8_t releaseX =
+            decayX + (localState.params.envRelease * (envW - decayX)) / 255;
+        if (releaseX > envX + envW)
+          releaseX = envX + envW;
+
+        // Draw envelope shape
+        u8g2->drawPixel(envX, envY + envH);
+        u8g2->drawLine(envX, envY + envH, attackX, envY);
+        u8g2->drawLine(attackX, envY, decayX, sustainY);
+        u8g2->drawLine(decayX, sustainY, releaseX, sustainY);
+        u8g2->drawLine(releaseX, sustainY, envX + envW, envY + envH);
+
+        // Show values on left
+        u8g2->setFont(u8g2_font_5x7_tr);
         drawHighlight(0, 0, 16);
         drawHighlight(1, 0, 24);
-
-        u8g2->setCursor(8, 16);
-        const char *filterModels[] = {"STD", "MOOG", "MS20"};
-        sprintf(buf, "Mod: %s", filterModels[localState.params.filterModel]);
-        u8g2->print(buf);
-
-        u8g2->setCursor(8, 24);
-        sprintf(buf, "Drv: %d", localState.params.filterDrive);
-        u8g2->print(buf);
-
-        break;
-      }
-      case PAGE_ENV:
-        drawHighlight(0, 0, 16);
-        drawHighlight(1, 0, 24);
-        drawHighlight(2, 64, 16);
-        drawHighlight(3, 64, 24);
+        drawHighlight(2, 32, 16);
+        drawHighlight(3, 32, 24);
 
         u8g2->setCursor(8, 16);
         sprintf(buf, "A: %d", localState.params.envAttack);
@@ -469,13 +381,14 @@ void displayUpdateTask(void *pvParameters) {
         u8g2->setCursor(8, 24);
         sprintf(buf, "D: %d", localState.params.envDecay);
         u8g2->print(buf);
-        u8g2->setCursor(72, 16);
+        u8g2->setCursor(40, 16);
         sprintf(buf, "S: %d", localState.params.envSustain);
         u8g2->print(buf);
-        u8g2->setCursor(72, 24);
+        u8g2->setCursor(40, 24);
         sprintf(buf, "R: %d", localState.params.envRelease);
         u8g2->print(buf);
         break;
+      }
       case PAGE_MOD: {
         drawHighlight(0, 0, 16);
         drawHighlight(1, 0, 24);
@@ -489,40 +402,6 @@ void displayUpdateTask(void *pvParameters) {
         u8g2->print(buf);
         u8g2->setCursor(72, 24);
         sprintf(buf, "Gld: %d", localState.params.glideTime);
-        u8g2->print(buf);
-        break;
-      }
-      case PAGE_MOD_ENV: {
-        drawHighlight(0, 0, 16);
-        drawHighlight(1, 0, 24);
-        drawHighlight(2, 64, 16);
-        drawHighlight(3, 64, 24);
-
-        u8g2->setCursor(8, 16);
-        sprintf(buf, "A: %d", localState.params.modEnvAttack);
-        u8g2->print(buf);
-        u8g2->setCursor(8, 24);
-        sprintf(buf, "D: %d", localState.params.modEnvDecay);
-        u8g2->print(buf);
-        u8g2->setCursor(72, 16);
-        sprintf(buf, "Amt: %d", localState.params.modEnvAmount);
-        u8g2->print(buf);
-        u8g2->setCursor(72, 24);
-        const char *targets[] = {"PTCH", "FLT", "OSC2"};
-        sprintf(buf, "Tgt: %s", targets[localState.params.modEnvTarget]);
-        u8g2->print(buf);
-        break;
-      }
-      case PAGE_MOD_EXT: {
-        drawHighlight(0, 0, 16);
-        drawHighlight(1, 0, 24);
-
-        u8g2->setCursor(8, 16);
-        sprintf(buf, "SH Dpth: %d", localState.params.shDepth);
-        u8g2->print(buf);
-        u8g2->setCursor(8, 24);
-        const char *shTargets[] = {"PTCH", "FLT"};
-        sprintf(buf, "SH Tgt: %s", shTargets[localState.params.shTarget]);
         u8g2->print(buf);
         break;
       }
@@ -543,26 +422,6 @@ void displayUpdateTask(void *pvParameters) {
         u8g2->print(buf);
         u8g2->setCursor(72, 16);
         sprintf(buf, "Sync: %s", localState.params.oscSync ? "On" : "Off");
-        u8g2->print(buf);
-        break;
-      }
-      case PAGE_FX_EXT: {
-        drawHighlight(0, 0, 16);
-        drawHighlight(1, 0, 24);
-        drawHighlight(2, 64, 16);
-        drawHighlight(3, 64, 24);
-
-        u8g2->setCursor(8, 16);
-        sprintf(buf, "CRate: %d", localState.params.chorusRate);
-        u8g2->print(buf);
-        u8g2->setCursor(8, 24);
-        sprintf(buf, "CDepth: %d", localState.params.chorusDepth);
-        u8g2->print(buf);
-        u8g2->setCursor(72, 16);
-        sprintf(buf, "CMix: %d", localState.params.chorusMix);
-        u8g2->print(buf);
-        u8g2->setCursor(72, 24);
-        sprintf(buf, "Crush: %d", localState.params.bitcrushDepth);
         u8g2->print(buf);
         break;
       }
@@ -613,9 +472,13 @@ void displayUpdateTask(void *pvParameters) {
         u8g2->print("VOL: ");
         u8g2->print(localState.params.masterVol);
         u8g2->setCursor(0, 30);
-        u8g2->print("OCT: ");
-        // Display octave as C2-C6 (offset -2 to +2 maps to octave 2-6)
-        u8g2->print(4 + localState.octaveOffset);
+        // Show the octave this specific board plays:
+        //   base octave 4 + position relative to main board + user offset
+        int thisOctave = 4 + ((int)localState.keyboardId - (int)localState.mainKeyboardId)
+                           + localState.octaveOffset;
+        char octBuf[12];
+        sprintf(octBuf, "OCT: %d", thisOctave);
+        u8g2->print(octBuf);
 
         // 2. Right Side: Waveform Graph
         const uint8_t graphStartX = 45;
@@ -742,7 +605,6 @@ void displayUpdateTask(void *pvParameters) {
           lastY = y;
         }
 
-        // Show frequency info
         u8g2->setFont(u8g2_font_5x7_tr);
         char buf[20];
         // Find first pressed key for display
@@ -756,6 +618,23 @@ void displayUpdateTask(void *pvParameters) {
           sprintf(buf, "Key: -");
         }
         u8g2->setCursor(0, 30);
+        u8g2->print(buf);
+
+        // Show pitch bend value
+        int8_t bend = localState.displayPitchBend;
+        bool pbEnabled = localState.pitchBendEnabled;
+        if (pbEnabled) {
+          if (bend > 0) {
+            sprintf(buf, "Bend: +%d", bend);
+          } else if (bend < 0) {
+            sprintf(buf, "Bend: %d", bend);
+          } else {
+            sprintf(buf, "Bend: 0");
+          }
+        } else {
+          sprintf(buf, "Bend: OFF");
+        }
+        u8g2->setCursor(60, 30);
         u8g2->print(buf);
 
       } else if (localState.viewMode == 2) {

@@ -34,3 +34,6 @@ int32_t processModEnvelope(const SynthParams &params);
 
 // Trigger release phase for a voice (called when key is released)
 void triggerEnvelopeRelease(uint8_t voiceIndex);
+
+// Trigger modulation envelope (called when note is played)
+void triggerModEnvelope();
