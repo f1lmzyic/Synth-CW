@@ -74,7 +74,7 @@ static void performHandshake(bool westIn, bool eastIn) {
 
   // Main board immediately broadcasts its ID so satellites get their octave
   // display without waiting for the periodic {M} cycle.
-  if (IS_MAIN_BOARD) {
+  if (!sysState.hasLeft) {
     uint8_t mMsg[8] = {'M', pos, 0, 0, 0, 0, 0, 0};
     xQueueSend(msgOutQ, mMsg, portMAX_DELAY);
   }
@@ -248,10 +248,9 @@ void scanKeysTask(void *pvParameters) {
       }
     }
 
-    // Determine if this board acts as main (plays audio):
-    //   - IS_MAIN_BOARD=true always acts as main
-    //   - Any board acts as main when standalone (no CAN neighbours)
-    bool actAsMain = IS_MAIN_BOARD || (!sysState.hasLeft && !sysState.hasRight);
+    // The leftmost board (no west neighbour) is the main board (plays audio).
+    // A standalone board also has no left neighbour, so it is always main.
+    bool actAsMain = !sysState.hasLeft;
 
     // If this board is the main board, periodically broadcast its ID so
     // satellites can compute their relative octave for display.

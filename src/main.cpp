@@ -62,7 +62,7 @@ void CAN_TX_ISR() { xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL); }
       }
 
       // Key messages only processed by the main board (or standalone board)
-      bool actAsMain = IS_MAIN_BOARD || (!sysState.hasLeft && !sysState.hasRight);
+      bool actAsMain = !sysState.hasLeft;
       if (!actAsMain) {
         continue;
       }
