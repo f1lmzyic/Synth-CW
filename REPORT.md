@@ -16,8 +16,6 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 
 ## Task Identification
 
-The final system combines FreeRTOS threads with hardware interrupts.  
-The table below identifies the active execution contexts used in the synthesizer and summarises their role in the implemented codebase.
 
 | Task / ISR | Type | FreeRTOS Priority | Trigger | Purpose |
 |---|---|---:|---|---|
