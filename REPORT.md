@@ -19,17 +19,17 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 
 | Task / ISR | Type | FreeRTOS Priority | Trigger | Purpose |
 |---|---|---:|---|---|
-| `sampleISR` | Timer interrupt | - | 22 kHz hardware timer | Runs the audio path once per sample: updates modulation state, calls `voiceEngineUpdateParams()`, mixes active voices, applies filter/effects processing, and writes the final output sample. |
-| `scanKeysTask` | Thread | 2 | Periodic (20 ms) | Scans the keyboard matrix, reads joystick state, interprets knob movement, updates local control state, and pushes note/control messages into `msgOutQ` when CAN transmission is needed. |
-| `decodeTask` | Thread | 3 | Event-driven (`msgInQ`) | Pulls received frames from `msgInQ`, decodes handshake/key messages, updates `keyboardId` / `mainKeyboardId`, and maintains the shared `pressedKeys` state used by the voice engine. |
-| `CAN_TX_Task` | Thread | 2 | Event-driven (`msgOutQ` + `CAN_TX_Semaphore`) | Pops outgoing frames from `msgOutQ` and sends them through the CAN peripheral when `CAN_TX_Semaphore` indicates that a transmit mailbox is free. |
-| `displayUpdateTask` | Thread | 1 | Periodic (100 ms) | Refreshes the OLED by rendering the current UI page, including menu screens, performance view, scope-style display, and envelope visualisation. |
-| `CAN_RX_ISR` | Hardware interrupt | - | Event-driven | Receives a CAN frame from hardware FIFO and appends it to `msgInQ` using the ISR-safe queue path. |
-| `CAN_TX_ISR` | Hardware interrupt | - | Event-driven | Signals CAN transmit completion and gives back mailbox availability through `CAN_TX_Semaphore`, allowing `CAN_TX_Task` to continue sending queued frames. |
+| `sampleISR` | Timer interrupt | - | 22 kHz hardware timer | Audio generation: modulation, voice mix, filter/effects, output write |
+| `scanKeysTask` | Thread | 2 | Periodic (20 ms) | Key scan, joystick read, knob decode, local control update |
+| `decodeTask` | Thread | 3 | Event-driven (`msgInQ`) | Decode CAN messages, update board/key state |
+| `CAN_TX_Task` | Thread | 2 | Event-driven (`msgOutQ` + `CAN_TX_Semaphore`) | Transmit queued CAN frames |
+| `displayUpdateTask` | Thread | 1 | Periodic (100 ms) | Refresh OLED menu and performance views |
+| `CAN_RX_ISR` | Hardware interrupt | - | Event-driven | Push received CAN frame into `msgInQ` |
+| `CAN_TX_ISR` | Hardware interrupt | - | Event-driven | Release TX mailbox via `CAN_TX_Semaphore` |
 
 
 
-## Task Characterisation
+## Task Characterization
 
 This section outlines each task in terms of its theoretical minimum initiation interval and measured maximum execution time, in line with the coursework requirements.
 
