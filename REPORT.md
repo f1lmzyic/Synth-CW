@@ -26,3 +26,35 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 | `displayUpdateTask` | Thread | 1 | Periodic (100 ms) | Refreshes the OLED by rendering the current UI page, including menu screens, performance view, scope-style display, and envelope visualisation. |
 | `CAN_RX_ISR` | Hardware interrupt | - | Event-driven | Receives a CAN frame from hardware FIFO and appends it to `msgInQ` using the ISR-safe queue path. |
 | `CAN_TX_ISR` | Hardware interrupt | - | Event-driven | Signals CAN transmit completion and gives back mailbox availability through `CAN_TX_Semaphore`, allowing `CAN_TX_Task` to continue sending queued frames. |
+
+
+
+## Task Characterisation
+
+This section outlines each task in terms of its theoretical minimum initiation interval and measured maximum execution time, in line with the coursework requirements.
+
+### 2.1 Minimum Initiation Intervals
+
+
+| Task / ISR | Minimum initiation interval | Assumptions used |
+|---|---:|---|
+| `sampleISR` | **45.45 us** | Timer interrupt configured at 22 kHz, so \( \tau = 1/22000 \,\text{s} \). |
+| `scanKeysTask` | **20 ms** | Periodic task using `vTaskDelayUntil()` with a 20 ms period. |
+| `displayUpdateTask` | **100 ms** | Periodic task using `vTaskDelayUntil()` with a 100 ms period. |
+| `CAN_RX_ISR` | **0.7 ms** | Worst-case CAN traffic assumption: minimum CAN frame transmission interval taken as 0.7 ms. |
+| `CAN_TX_ISR` | **0.7 ms** | One TX completion interrupt is produced per transmitted CAN frame, so the same minimum inter-arrival time is used. |
+| `decodeTask` | **25.2 ms for 36 executions** | `msgInQ` length is 36. Under worst-case CAN traffic, the queue can fill in \(36 \times 0.7 = 25.2\) ms. |
+| `CAN_TX_Task` | **60 ms for 36 executions** | `scanKeysTask` runs every 20 ms and can generate up to 12 outgoing messages each cycle, so a 36-item `msgOutQ` can fill in 60 ms. |
+
+### 2.2 Measured Maximum Execution Time
+
+
+| Task / ISR | Measured maximum execution time |
+|---|---:|
+| `sampleISR` | ___ us |
+| `scanKeysTask` | ___ us |
+| `displayUpdateTask` | ___ us |
+| `CAN_RX_ISR` | ___ us |
+| `CAN_TX_ISR` | ___ us |
+| `decodeTask` | ___ us |
+| `CAN_TX_Task` | ___ us |
