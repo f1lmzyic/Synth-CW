@@ -38,7 +38,7 @@ This section outlines each task in terms of its theoretical minimum initiation i
 
 | Task / ISR | Minimum initiation interval | Assumptions used |
 |---|---:|---|
-| `sampleISR` | **45.45 us** | Timer interrupt configured at 22 kHz, so \( \tau = 1/22000 \,\text{s} \). |
+| `sampleISR` | **45.45 us** | Timer interrupt configured at 22 kHz. |
 | `scanKeysTask` | **20 ms** | Periodic task using `vTaskDelayUntil()` with a 20 ms period. |
 | `displayUpdateTask` | **100 ms** | Periodic task using `vTaskDelayUntil()` with a 100 ms period. |
 | `CAN_RX_ISR` | **0.7 ms** | Worst-case CAN traffic assumption: minimum CAN frame transmission interval taken as 0.7 ms. |
