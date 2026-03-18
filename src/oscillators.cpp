@@ -15,17 +15,14 @@ int32_t mixOscillators(uint32_t osc1Step, uint32_t osc2Step, uint32_t phase,
   uint32_t osc2Phase = phase + ((phase >> 12) * (osc2Step - osc1Step) >> 12);
 
   // Hard sync: reset OSC2 phase when OSC1 wraps
-  uint32_t oldPhase = phase;
   uint32_t newPhase = phase + osc1Step;
-  if (params.oscSync && newPhase < oldPhase) {
+  if (params.oscSync && newPhase < phase) {
     osc2Phase = 0;
   }
 
   // OSC1 with wave morphing between adjacent waveforms
   uint8_t waveIndex1 = params.osc1WaveMorph >> 6; // 0-3 (which waveform)
-  uint8_t waveIndex2 = waveIndex1 + 1;
-  if (waveIndex2 > 3)
-    waveIndex2 = 3;
+  uint8_t waveIndex2 = (waveIndex1 < 3) ? waveIndex1 + 1 : 3;
   uint8_t morphFrac = (params.osc1WaveMorph & 0x3F) << 2; // 0-255
 
   int32_t osc1a = getWaveSample((WaveformType)waveIndex1, newPhase);
@@ -41,20 +38,20 @@ int32_t mixOscillators(uint32_t osc1Step, uint32_t osc2Step, uint32_t phase,
   // Ring modulation (OSC1 * OSC2)
   int32_t ringOut = (osc1Out * osc2Out) >> 7;
 
-  // Mix OSC1 and OSC2 based on mix parameter
-  int32_t mix = params.mixOsc2;
-  int32_t voiceMix = ((osc1Out * (100 - mix)) + (osc2Out * mix)) / 100;
+  // Mix OSC1 and OSC2 based on mix parameter (use >>7 instead of /100)
+  // Scale: param 0-100 maps to 0-128 range (param * 5 / 4 ≈ param + param>>2)
+  int32_t mix = params.mixOsc2 + (params.mixOsc2 >> 2);
+  int32_t voiceMix = ((osc1Out * (128 - mix)) + (osc2Out * mix)) >> 7;
 
-  // Add sub oscillator, noise, and ring mod
-  voiceMix += (subOut * params.subOscMix) / 100;
-  voiceMix += (noiseVal * params.noiseMix) / 100;
-  voiceMix += (ringOut * params.ringModMix) / 100;
+  // Add sub oscillator, noise, and ring mod (use >>7 instead of /100)
+  voiceMix += (subOut * (params.subOscMix + (params.subOscMix >> 2))) >> 7;
+  voiceMix += (noiseVal * (params.noiseMix + (params.noiseMix >> 2))) >> 7;
+  voiceMix += (ringOut * (params.ringModMix + (params.ringModMix >> 2))) >> 7;
 
   // Soft clip the mix bus (gentle saturation)
   if (voiceMix > 127) {
     voiceMix = 127 + ((voiceMix - 127) >> 2);
-  }
-  if (voiceMix < -128) {
+  } else if (voiceMix < -128) {
     voiceMix = -128 - ((-128 - voiceMix) >> 2);
   }
 

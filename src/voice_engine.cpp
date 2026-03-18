@@ -54,8 +54,9 @@ static bool isKeyPressed(uint16_t key) {
 // Helper: find voice assigned to key, returns -1 if not found
 static int8_t findVoiceForKey(uint16_t key) {
   for (int v = 0; v < POLYPHONY; v++) {
-    if (voices[v].active && voices[v].key == key)
+    if (voices[v].active && voices[v].key == key) {
       return v;
+    }
   }
   return -1;
 }
@@ -92,9 +93,9 @@ uint32_t applyPitchBend(uint32_t stepSize, uint8_t bendValue) {
   // ln(2)/1200 ≈ 0.00057735
   // In Q16.16: multiplier = 65536 + cents * 37.85
   // Using 38 for slight overcorrection which sounds better
-  
+
   uint32_t multiplier = 0x10000 + (centsOffset * 38);
-  
+
   // Apply to step size
   uint64_t result = (static_cast<uint64_t>(stepSize) * multiplier) >> 16;
   return static_cast<uint32_t>(result);
@@ -132,8 +133,11 @@ void voiceEngineUpdateParams(void) {
     }
   }
 
-  // Step 2: Allocate voices for newly pressed keys
-  for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
+  // Step 2: Allocate voices for newly pressed keys (limit to POLYPHONY)
+  uint8_t keyCount = sysState.pressedKeyCount;
+  if (keyCount > MAX_PRESSED_KEYS) keyCount = MAX_PRESSED_KEYS;
+  if (keyCount > POLYPHONY) keyCount = POLYPHONY;  // Only process up to POLYPHONY keys
+  for (uint8_t i = 0; i < keyCount; i++) {
     uint16_t key = sysState.pressedKeys[i];
 
     // Skip if already has a voice
@@ -156,31 +160,27 @@ void voiceEngineUpdateParams(void) {
       voices[freeVoice].envState = VOICE_ENV_RELEASE;
     }
 
-    // Allocate voice to key
-    voices[freeVoice].key = key;
-    voices[freeVoice].active = true;
-    voices[freeVoice].retrigger = true;
-    voices[freeVoice].envValue = 0;
-    voices[freeVoice].envState = VOICE_ENV_ATTACK;
-
-    // Trigger modulation envelope when note is played
-    triggerModEnvelope();
-
-    // Calculate step size.
-    // Octave is relative to the main board's position (mainKeyboardId):
-    //   boards to the left  → negative offset → lower pitch
-    //   boards to the right → positive offset → higher pitch
+    // Calculate step size
     uint16_t keyboardId = key / KEYS_PER_KEYBOARD;
     uint8_t keyInKeyboard = key % KEYS_PER_KEYBOARD;
     int octaveRelative = (int)keyboardId - (int)sysState.mainKeyboardId;
     int midiNote =
         (4 + octaveRelative + sysState.octaveOffset) * 12 + keyInKeyboard;
-    voices[freeVoice].baseStep = voiceEngineGetStepSizeForMidiNote(midiNote);
-    voices[freeVoice].targetStep = applyPitchBend(voices[freeVoice].baseStep, pitchBendValue);
+    uint32_t newBaseStep = voiceEngineGetStepSizeForMidiNote(midiNote);
+    uint32_t newTargetStep = applyPitchBend(newBaseStep, pitchBendValue);
 
-    if (sysState.params.glideTime == 0) {
-      voices[freeVoice].step = voices[freeVoice].targetStep;
-    }
+    // Set all voice fields, active LAST
+    voices[freeVoice].key = key;
+    voices[freeVoice].baseStep = newBaseStep;
+    voices[freeVoice].targetStep = newTargetStep;
+    voices[freeVoice].step = newTargetStep;
+    voices[freeVoice].retrigger = true;
+    voices[freeVoice].envValue = 0;
+    voices[freeVoice].envState = VOICE_ENV_ATTACK;
+    voices[freeVoice].active = true;
+
+    // Trigger modulation envelope when note is played
+    triggerModEnvelope();
   }
 
   // Step 3: Reapply current pitch bend to all active voices so that moving

@@ -149,38 +149,41 @@ std::bitset<4> readCols() {
 }
 
 void scanKeysTask(void *pvParameters) {
+#ifndef TEST_SCANKEYS
   const TickType_t xFrequency = pdMS_TO_TICKS(20);
   TickType_t xLastWakeTime = xTaskGetTickCount();
+#endif
 
   static Knob knobs[4];
   static bool prevJoyButton = false;  // For pitch bend toggle
 
+#ifdef TEST_SCANKEYS
+  // Test mode: run once without blocking
+#else
   while (true) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
+#endif
 
     std::bitset<32> localInputs;
 
     // Scan key matrix rows 0-4
-    for (int i = 0; i < 5; i++) {
-      setRow(i, true); // Enable row for key scanning
+    for (int row = 0; row < 5; row++) {
+      setRow(row, true); // Enable row for key scanning
       delayMicroseconds(3);
       std::bitset<4> cols = readCols();
-      localInputs[i * 4] = cols[0];
-      localInputs[i * 4 + 1] = cols[1];
-      localInputs[i * 4 + 2] = cols[2];
-      localInputs[i * 4 + 3] = cols[3];
+      for (uint8_t col = 0; col < 4; col++) localInputs[row * 4 + col] = cols[col];
 
       // Decode knobs from rows 3 and 4
-      if (i == 3) {
-        int8_t dir3 = knobs[3].update((cols[0] << 1) | cols[1]);
-        int8_t dir2 = knobs[2].update((cols[2] << 1) | cols[3]);
+      if (row == 3) {
+        int8_t dir3 = knobs[3].update(cols[0] << 1 | cols[1]);
         if (dir3 != 0)
           uiHandleKnobRotation(3, dir3);
+        int8_t dir2 = knobs[2].update(cols[2] << 1 | cols[3]);
         if (dir2 != 0)
           uiHandleKnobRotation(2, dir2);
-      } else if (i == 4) {
-        int8_t dir1 = knobs[1].update((cols[0] << 1) | cols[1]);
-        int8_t dir0 = knobs[0].update((cols[2] << 1) | cols[3]);
+      } else if (row == 4) {
+        int8_t dir1 = knobs[1].update(cols[0] << 1 | cols[1]);
+        int8_t dir0 = knobs[0].update(cols[2] << 1 | cols[3]);
         if (dir1 != 0)
           uiHandleKnobRotation(1, dir1);
         if (dir0 != 0)
@@ -191,13 +194,11 @@ void scanKeysTask(void *pvParameters) {
     // Read joystick button (row 5, col 2) and West input (row 5, col 3)
     setRow(5, true);
     delayMicroseconds(3);
-    std::bitset<4> cols5 = readCols();
-    localInputs[20] = cols5[0];
-    localInputs[21] = cols5[1];
-    localInputs[22] = cols5[2]; // Joystick S button
-    localInputs[23] = cols5[3]; // West Input
-    bool westIn = !cols5[3];
-    bool joyButton = !cols5[2]; // Joystick button pressed (active low)
+    std::bitset<4> col5 = readCols();
+    localInputs[22] = col5[2]; // Joystick S button
+    localInputs[23] = col5[3]; // West Input
+    const bool westIn = !col5[3];
+    const bool joyButton = !col5[2];
 
     // Toggle pitch bend on button press
     if (joyButton && !prevJoyButton) {
@@ -270,6 +271,13 @@ void scanKeysTask(void *pvParameters) {
     }
 
     // Compare with previous state to detect changes and send messages
+#ifdef TEST_SCANKEYS
+    // Worst-case test: generate 12 key press messages every iteration
+    for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
+      uint8_t TX_Message[8] = {'P', (uint8_t)i, sysState.keyboardId, 0, 0, 0, 0, 0};
+      xQueueSend(msgInQ, TX_Message, 0);  // Non-blocking for test
+    }
+#else
     for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
       if (keysPrevPressed[i] != keysPressed[i]) {
         uint8_t msgType = keysPressed[i] ? 'P' : 'R';
@@ -283,26 +291,25 @@ void scanKeysTask(void *pvParameters) {
         }
 
         if (actAsMain) {
-          xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
+          xQueueSend(msgInQ, TX_Message, pdMS_TO_TICKS(10));
         }
 
         keysPrevPressed[i] = keysPressed[i];
       }
     }
+#endif
 
     // ============================================================================
-    // Read pitch bend enabled state for navigation control
+    // Read joystick for navigation and pitch bend
     // ============================================================================
-    bool pbEnabled = false;
-    {
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
-        pbEnabled = sysState.pitchBendEnabled;
-      }
-    }
+    // Read pitch bend enabled (atomic read for single byte)
+    bool pbEnabled = sysState.pitchBendEnabled;
+
+    int16_t joyX = analogRead(JOYX_PIN);
+    int16_t joyY = analogRead(JOYY_PIN);
 
     // Joystick navigation (Y-axis disabled when pitch bend is active)
-    navUpdate(analogRead(JOYX_PIN), analogRead(JOYY_PIN), pbEnabled);
+    navUpdate(joyX, joyY, pbEnabled);
 
     // ============================================================================
     // Read joystick for pitch bend (Y-axis) - incremental/relative control
@@ -310,84 +317,53 @@ void scanKeysTask(void *pvParameters) {
     // Range: ±2 semitones (200 cents) with smooth increments
     // Toggle with joystick button
     // ============================================================================
-    {
-      // Static variable to track current pitch bend in cents (-200 to +200)
-      static int16_t currentBendCents = 0;
-      static uint32_t lastUpdateMs = 0;
+    static int16_t currentBendCents = 0;
+    static uint32_t lastUpdateMs = 0;
 
-      int16_t joyY = analogRead(JOYY_PIN);
-      int16_t joyCenter = JOY_CENTER_Y;
-      int16_t threshold = JOY_THRESHOLD;
+    uint8_t newPitchBend = PITCH_BEND_CENTER;
+    int8_t bendSemitones = 0;
 
-      uint8_t newPitchBend = PITCH_BEND_CENTER;
-      int8_t bendSemitones = 0;
+    if (pbEnabled) {
+      uint32_t now = millis();
 
-      if (pbEnabled) {
-        uint32_t now = millis();
-        
-        // Rate limit: update every 50ms for smooth gradual control
-        if (now - lastUpdateMs > 50) {
-          lastUpdateMs = now;
-          
-          // Calculate how far joystick is pushed from center
-          int16_t joyDelta = 0;
-          if (joyY < joyCenter - threshold) {
-            // Pushed down - bend down
-            joyDelta = joyY - (joyCenter - threshold);  // negative value
-          } else if (joyY > joyCenter + threshold) {
-            // Pushed up - bend up
-            joyDelta = joyY - (joyCenter + threshold);   // positive value
-          }
-          
-          // Scale: max deflection (~350) maps to max bend rate
-          // Small deflection = slower bend, large deflection = faster bend
-          int16_t bendRate = joyDelta / 35;  // -10 to +10 cents per 50ms
-          
-          // Apply bend
-          currentBendCents += bendRate;
-          
-          // Clamp to ±200 cents (±2 semitones)
-          if (currentBendCents < -200) currentBendCents = -200;
-          if (currentBendCents > 200) currentBendCents = 200;
+      if (now - lastUpdateMs > 50) {
+        lastUpdateMs = now;
+
+        int16_t joyDelta = 0;
+        if (joyY < JOY_CENTER_Y - JOY_THRESHOLD) {
+          joyDelta = joyY - (JOY_CENTER_Y - JOY_THRESHOLD);
+        } else if (joyY > JOY_CENTER_Y + JOY_THRESHOLD) {
+          joyDelta = joyY - (JOY_CENTER_Y + JOY_THRESHOLD);
         }
-        
-        // Convert cents to bend value (128 = center, 0 = -2 semitones, 255 = +2 semitones)
-        // 200 cents = +2 semitones = +128 from center
-        // 1 cent = 128/200 = 0.64 units
-        int16_t rawBend = PITCH_BEND_CENTER + (currentBendCents * 128 / 200);
-        if (rawBend < 0) rawBend = 0;
-        if (rawBend > 255) rawBend = 255;
-        newPitchBend = static_cast<uint8_t>(rawBend);
-        
-        // For UI display: convert cents to semitones (rounded)
-        bendSemitones = (currentBendCents + 50) / 100;  // Round to nearest semitone
-      } else {
-        // Pitch bend disabled - reset to center
-        currentBendCents = 0;
-        newPitchBend = PITCH_BEND_CENTER;
-        bendSemitones = 0;
+
+        currentBendCents += joyDelta / 35;
+        if (currentBendCents < -200) currentBendCents = -200;
+        if (currentBendCents > 200) currentBendCents = 200;
       }
 
-      // Atomic store for thread safety (ISR reads this)
-      noInterrupts();
-      pitchBendValue = newPitchBend;
-      interrupts();
+      int16_t rawBend = PITCH_BEND_CENTER + (currentBendCents * 128 / 200);
+      if (rawBend < 0) rawBend = 0;
+      if (rawBend > 255) rawBend = 255;
+      newPitchBend = static_cast<uint8_t>(rawBend);
+      bendSemitones = (currentBendCents + 50) / 100;
+    } else {
+      currentBendCents = 0;
+    }
 
+    // Atomic store for ISR
+    __atomic_store_n(&pitchBendValue, newPitchBend, __ATOMIC_RELAXED);
+
+    {
       // Store for UI display
       MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
       if (lock) {
         sysState.displayPitchBend = bendSemitones;
-      }
-    }
-
-    // Update global state
-    {
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
         sysState.inputs = localInputs;
       }
     }
 
     dspUpdateParams();
+#ifndef TEST_SCANKEYS
   }
+#endif
 }

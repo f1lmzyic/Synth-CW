@@ -3,6 +3,22 @@
 #include <STM32FreeRTOS.h>
 #include <bitset>
 
+#define TEST_SCANKEYS     // Test scanKeysTask worst-case (12 key messages) - 471 us
+// #define TEST_DISPLAY      // Test displayUpdateTask worst-case - 16674 us
+// #define TEST_DECODE       // Test decodeTask worst-case - 11us
+// #define TEST_CANTX        // Test CAN_TX_Task worst-case - 4 us
+// #define TEST_SAMPLEISR    // Test sampleISR worst-case - 22 us
+
+// Number of iterations for timing measurement
+#define TEST_ITERATIONS 32
+
+// Auto-enable these when any test is active
+#if defined(TEST_SCANKEYS) || defined(TEST_DISPLAY) || defined(TEST_DECODE) || \
+defined(TEST_CANTX) || defined(TEST_SAMPLEISR)
+  #define DISABLE_THREADS
+  #define DISABLE_ISRS
+#endif
+
 // Maximum number of keys that can be tracked simultaneously
 // Supports up to 3 connected keyboards (3 * 12 = 36 keys)
 #define MAX_PRESSED_KEYS 36
@@ -46,7 +62,7 @@ private:
 // ============================================================================
 // Polyphony configuration
 // ============================================================================
-#define POLYPHONY 8          // Maximum simultaneous voices
+#define POLYPHONY 4          // Maximum simultaneous voices
 #define KEYS_PER_KEYBOARD 12 // Keys per keyboard module
 
 // Waveform definitions

@@ -65,20 +65,23 @@ void sampleISR() {
   // 5-6. Polyphonic voice processing
   int32_t combinedVoiceOut = 0, totalEnvCurrent = 0;
   uint8_t activeVoiceCount = 0;
+  // Pre-calculate glide shift (avoid division in loop)
+  uint8_t glideShift = 4 + (localParams.glideTime >> 3); // Maps 0-127 to shifts 4-19
+
   for (int v = 0; v < POLYPHONY; v++) {
     volatile VoiceState &voice = voices[v];
     if (!voice.active)
       continue;
     activeVoiceCount++;
-    // Voice glide
+    // Voice glide (use shift instead of division)
     if (voice.step != voice.targetStep) {
       int32_t diff = voice.targetStep - voice.step;
-      int32_t step = diff / (1 + localParams.glideTime * 50);
-      if (abs(step) < GLIDE_STEP_MIN)
-        step = (diff > 0) ? GLIDE_STEP_MIN : -GLIDE_STEP_MIN;
+      int32_t step = diff >> glideShift;
+      if (step == 0)
+        step = (diff > 0) ? 1 : -1;
       voice.step += step;
-      if ((step > 0 && voice.step > voice.targetStep) ||
-          (step < 0 && voice.step < voice.targetStep))
+      if ((diff > 0 && voice.step > voice.targetStep) ||
+          (diff < 0 && voice.step < voice.targetStep))
         voice.step = voice.targetStep;
     }
     // Voice pitch with modulations
@@ -112,15 +115,13 @@ void sampleISR() {
     combinedVoiceOut += voiceMix;
     totalEnvCurrent += voiceEnv;
   }
-  // Release envelopes for inactive voices
+  // Release envelopes for inactive voices (use shift instead of division)
+  uint8_t releaseShift = 3 + (localParams.envRelease >> 4);
   for (int v = 0; v < POLYPHONY; v++) {
     volatile VoiceState &voice = voices[v];
     if (!voice.active && voice.envValue > 0) {
-      int32_t step =
-          voice.envValue /
-          (8 + ((localParams.envRelease * localParams.envRelease) >> 5));
-      if (step < 1)
-        step = 1;
+      int32_t step = voice.envValue >> releaseShift;
+      if (step < 1) step = 1;
       voice.envValue -= step;
       if (voice.envValue <= 0) {
         voice.envValue = 0;
@@ -128,13 +129,20 @@ void sampleISR() {
       }
     }
   }
-  // Scale output
-  if (activeVoiceCount > 0)
-    totalEnvCurrent =
-        (totalEnvCurrent + activeVoiceCount / 2) / activeVoiceCount;
-  int32_t vout = activeVoiceCount ? (combinedVoiceOut * POLYPHONY) /
-                                        (POLYPHONY + activeVoiceCount)
-                                  : 0;
+  // Scale output using shift approximations to avoid division
+  // For small voice counts, use pre-calculated shifts
+  int32_t vout = 0;
+  if (activeVoiceCount > 0) {
+    // Approximate division by voice count using shifts
+    // 1: >>0, 2: >>1, 3: multiply by 85 >>8, 4: >>2
+    switch (activeVoiceCount) {
+      case 1: totalEnvCurrent = totalEnvCurrent; vout = combinedVoiceOut >> 1; break;
+      case 2: totalEnvCurrent >>= 1; vout = (combinedVoiceOut * 85) >> 8; break;
+      case 3: totalEnvCurrent = (totalEnvCurrent * 85) >> 8; vout = (combinedVoiceOut * 73) >> 8; break;
+      case 4: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
+      default: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
+    }
+  }
 
   // 7-9. Filter section
   int32_t cutoff = smoothCutoff * 2;
