@@ -46,7 +46,7 @@ private:
 // ============================================================================
 // Polyphony configuration
 // ============================================================================
-#define POLYPHONY 8          // Maximum simultaneous voices
+#define POLYPHONY 4          // Maximum simultaneous voices
 #define KEYS_PER_KEYBOARD 12 // Keys per keyboard module
 
 // Waveform definitions

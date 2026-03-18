@@ -65,20 +65,23 @@ void sampleISR() {
   // 5-6. Polyphonic voice processing
   int32_t combinedVoiceOut = 0, totalEnvCurrent = 0;
   uint8_t activeVoiceCount = 0;
+  // Pre-calculate glide shift (avoid division in loop)
+  uint8_t glideShift = 4 + (localParams.glideTime >> 3); // Maps 0-127 to shifts 4-19
+
   for (int v = 0; v < POLYPHONY; v++) {
     volatile VoiceState &voice = voices[v];
     if (!voice.active)
       continue;
     activeVoiceCount++;
-    // Voice glide
+    // Voice glide (use shift instead of division)
     if (voice.step != voice.targetStep) {
       int32_t diff = voice.targetStep - voice.step;
-      int32_t step = diff / (1 + localParams.glideTime * 50);
-      if (abs(step) < GLIDE_STEP_MIN)
-        step = (diff > 0) ? GLIDE_STEP_MIN : -GLIDE_STEP_MIN;
+      int32_t step = diff >> glideShift;
+      if (step == 0)
+        step = (diff > 0) ? 1 : -1;
       voice.step += step;
-      if ((step > 0 && voice.step > voice.targetStep) ||
-          (step < 0 && voice.step < voice.targetStep))
+      if ((diff > 0 && voice.step > voice.targetStep) ||
+          (diff < 0 && voice.step < voice.targetStep))
         voice.step = voice.targetStep;
     }
     // Voice pitch with modulations
@@ -112,15 +115,13 @@ void sampleISR() {
     combinedVoiceOut += voiceMix;
     totalEnvCurrent += voiceEnv;
   }
-  // Release envelopes for inactive voices
+  // Release envelopes for inactive voices (use shift instead of division)
+  uint8_t releaseShift = 3 + (localParams.envRelease >> 4);
   for (int v = 0; v < POLYPHONY; v++) {
     volatile VoiceState &voice = voices[v];
     if (!voice.active && voice.envValue > 0) {
-      int32_t step =
-          voice.envValue /
-          (8 + ((localParams.envRelease * localParams.envRelease) >> 5));
-      if (step < 1)
-        step = 1;
+      int32_t step = voice.envValue >> releaseShift;
+      if (step < 1) step = 1;
       voice.envValue -= step;
       if (voice.envValue <= 0) {
         voice.envValue = 0;

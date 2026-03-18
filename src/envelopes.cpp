@@ -45,13 +45,18 @@ uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params) {
   }
 
   int32_t step, target;
-  // Time scaling: parameter 0-127 maps to ~1ms to ~2s
-  // Using quadratic scaling for more musical feel
+  // Time scaling using bit shifts for speed
+  // Approximate division with right shifts based on parameter ranges
   switch (voice.envState) {
   case ENV_ATTACK:
-    // Attack: fast initial rise
-    // Higher param = slower attack (more samples to reach peak)
-    step = (255 << 8) / (1 + ((params.envAttack * params.envAttack) >> 4));
+    // Attack: use shift-based approximation
+    // params.envAttack 0-127, squared >> 4 gives 0-1016
+    // Shift by 3 + (param >> 5) gives range of dividers 8-11
+    {
+      uint8_t shift = 3 + (params.envAttack >> 5);
+      step = (255 << 8) >> shift;
+      if (step < 1) step = 1;
+    }
     voice.envValue += step;
     if (voice.envValue >= (255 << 8)) {
       voice.envValue = 255 << 8;
@@ -59,13 +64,13 @@ uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params) {
     }
     break;
   case ENV_DECAY:
-    // Decay: exponential-like fall to sustain level (piano-like)
-    target = (params.envSustain * 255) << 1; // Sustain 0-127 -> 0-32385
+    // Decay: exponential-like fall to sustain level
+    target = (params.envSustain << 9) - (params.envSustain << 1); // ~255*sustain*2
     if (voice.envValue > target) {
-      // Exponential decay: step proportional to current value
-      step = voice.envValue / (8 + ((params.envDecay * params.envDecay) >> 5));
-      if (step < 1)
-        step = 1;
+      // Use shift-based decay (faster)
+      uint8_t shift = 3 + (params.envDecay >> 4);
+      step = voice.envValue >> shift;
+      if (step < 1) step = 1;
       voice.envValue -= step;
       if (voice.envValue <= target) {
         voice.envValue = target;
@@ -77,15 +82,15 @@ uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params) {
     break;
   case ENV_SUSTAIN:
     // Hold at sustain level while key is held
-    target = (params.envSustain * 255) << 1;
-    voice.envValue = target;
+    voice.envValue = (params.envSustain << 9) - (params.envSustain << 1);
     break;
   case ENV_RELEASE:
-    // Release: exponential decay to zero (natural piano tail)
-    step =
-        voice.envValue / (8 + ((params.envRelease * params.envRelease) >> 5));
-    if (step < 1)
-      step = 1;
+    // Release: exponential decay to zero
+    {
+      uint8_t shift = 3 + (params.envRelease >> 4);
+      step = voice.envValue >> shift;
+      if (step < 1) step = 1;
+    }
     voice.envValue -= step;
     if (voice.envValue <= 0) {
       voice.envValue = 0;
