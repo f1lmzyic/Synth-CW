@@ -210,9 +210,7 @@ void setup() {
     }
 
     // Init state
-    sysState.menuMode = false;
-    sysState.activePage = PAGE_OSC;
-    sysState.viewMode = 0; // Default to performance view
+    sysState.activePage = PAGE_PERFORMANCE;
     sysState.lastHandshakePos = -1;
     sysState.keyboardId = 0; // Default keyboard ID
     sysState.mainKeyboardId = 0; // Default: board 0 is main

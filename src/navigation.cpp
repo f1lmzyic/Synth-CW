@@ -12,7 +12,7 @@ struct AxisState {
   uint32_t nextMs = 0;
 };
 
-static AxisState axisX, axisY;
+static AxisState axisX;
 
 // Returns -1, 0, or +1 relative to joystick center
 static int8_t joyDir(int16_t val, int16_t center) {
@@ -32,58 +32,24 @@ static void handleX(int8_t dir, uint32_t now) {
   if (!axisX.fired || now >= axisX.nextMs) {
     MutexGuard lock(sysState.mutex, MUTEX_TIMEOUT);
     if (lock) {
-      if (!sysState.menuMode) {
-        sysState.menuMode = true;
-        sysState.viewMode = static_cast<uint8_t>(ViewMode::Menu);
-      }
-      int newPage = static_cast<int>(sysState.activePage) + dir;
-      if (newPage < 0)           newPage = 0;
-      if (newPage >= PAGE_COUNT) newPage = PAGE_COUNT - 1;
-      sysState.activePage = static_cast<MenuPage>(newPage);
+      int idx = static_cast<int>(sysState.activePage) + dir;
+      idx = (idx + PAGE_COUNT) % PAGE_COUNT;
+      sysState.activePage = static_cast<MenuPage>(idx);
     }
     axisX.nextMs = now + (axisX.fired ? REPEAT_DELAY_MS : INITIAL_DELAY_MS);
     axisX.fired  = true;
   }
 }
 
-// Vertical: exit menu → performance, or cycle performance views
-static void handleY(int8_t dir, uint32_t now) {
-  if (dir != axisY.dir) {
-    axisY.dir   = dir;
-    axisY.fired = false;
-  }
-  if (dir == 0) return;
-
-  if (!axisY.fired || now >= axisY.nextMs) {
-    MutexGuard lock(sysState.mutex, MUTEX_TIMEOUT);
-    if (lock) {
-      if (sysState.menuMode) {
-        sysState.menuMode = false;
-        sysState.viewMode = static_cast<uint8_t>(ViewMode::Performance);
-      } else {
-        constexpr int nonMenuViews = static_cast<int>(ViewMode::Menu); // 3
-        int newMode = (static_cast<int>(sysState.viewMode) + dir + nonMenuViews) % nonMenuViews;
-        sysState.viewMode = static_cast<uint8_t>(newMode);
-      }
-    }
-    axisY.nextMs = now + (axisY.fired ? REPEAT_DELAY_MS : INITIAL_DELAY_MS);
-    axisY.fired  = true;
-  }
-}
-
-void navUpdate(int16_t joyX, int16_t joyY, bool pitchBendActive) {
+void navUpdate(int16_t joyY, bool pitchBendActive) {
   uint32_t now = millis();
-  
-  // When pitch bend is active, disable ALL navigation (X and Y axes)
+
+  // When pitch bend is active, disable navigation
   if (!pitchBendActive) {
-    handleX(joyDir(joyX, JOY_CENTER_X), now);
-    handleY(joyDir(joyY, JOY_CENTER_Y), now);
+    handleX(joyDir(joyY, JOY_CENTER_Y), now);
   } else {
-    // Reset both axes so navigation doesn't fire stale events
-    // the moment pitch bend is toggled off while joystick is still deflected
+    // Reset axis so navigation doesn't fire stale events
     axisX.dir   = 0;
     axisX.fired = false;
-    axisY.dir   = 0;
-    axisY.fired = false;
   }
 }

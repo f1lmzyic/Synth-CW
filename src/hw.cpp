@@ -305,11 +305,10 @@ void scanKeysTask(void *pvParameters) {
     // Read pitch bend enabled (atomic read for single byte)
     bool pbEnabled = sysState.pitchBendEnabled;
 
-    int16_t joyX = analogRead(JOYX_PIN);
     int16_t joyY = analogRead(JOYY_PIN);
 
     // Joystick navigation (Y-axis disabled when pitch bend is active)
-    navUpdate(joyX, joyY, pbEnabled);
+    navUpdate(joyY, pbEnabled);
 
     // ============================================================================
     // Read joystick for pitch bend (Y-axis) - incremental/relative control

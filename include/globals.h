@@ -79,7 +79,8 @@ extern const char *waveformNames[];
 
 // UI Menu State
 enum MenuPage {
-  PAGE_OSC = 0,
+  PAGE_PERFORMANCE = 0,
+  PAGE_OSC,
   PAGE_OSC_EXT,
   PAGE_FLT,
   PAGE_ENV,
@@ -156,9 +157,7 @@ struct SystemState {
   SynthParams params;
 
   // UI State
-  bool menuMode;
   MenuPage activePage;
-  uint8_t viewMode; // 0=Performance, 1=Scope, 2=Envelope, 3=Menu
 
   // Parameter highlight (shows which param was last adjusted)
   uint8_t highlightedKnob;   // 0-3, which knob was last turned
