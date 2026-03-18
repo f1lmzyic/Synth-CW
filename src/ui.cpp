@@ -123,18 +123,25 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
 }
 
 void displayUpdateTask(void *pvParameters) {
+#ifndef TEST_DISPLAY
   const TickType_t xFrequency = pdMS_TO_TICKS(100);
   TickType_t xLastWakeTime = xTaskGetTickCount();
+#endif
   static const char *notes[] = {"C",  "C#", "D",  "D#", "E",  "F",
                                 "F#", "G",  "G#", "A",  "A#", "B"};
   static const char *pageNames[] = {"OSC", "OSC2", "FLT", "ENV", "MOD", "FX"};
 
+#ifdef TEST_DISPLAY
+  // Test mode: run once without blocking
+#else
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
+#endif
 
     SystemState localState;
     {
-      MutexGuard lock(sysState.mutex);
+      // Use timeout to prevent deadlock with higher-priority tasks
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(50));
       if (lock) {
         localState = sysState;
       }
@@ -381,18 +388,21 @@ void displayUpdateTask(void *pvParameters) {
         const uint8_t graphCenterY = 12;
         const uint8_t graphHeightAmp = 12; // +/- 12 pixels
 
+        // Pre-calculate mix value once
+        int32_t mix = localState.params.mixOsc2 + (localState.params.mixOsc2 >> 2);
+        uint8_t waveBase1 = localState.params.osc1WaveMorph >> 6;
+        uint8_t waveBase2 = (waveBase1 < 3) ? waveBase1 + 1 : 3;
+        uint8_t morphFract = (localState.params.osc1WaveMorph & 0x3F) << 2;
+
         int lastY = -1;
-        for (uint8_t x = 0; x < graphWidth; x++) {
-          // Calculate phase 0-255 based on x position (draws 2 full cycles for
-          // OSC1)
-          uint8_t phase1 = (x * 510) / graphWidth;
+        int lastX = graphStartX;
+        // Draw every 2nd pixel for speed
+        for (uint8_t x = 0; x < graphWidth; x += 2) {
+          // Calculate phase using shifts instead of division
+          uint8_t phase1 = (x * 6) + (x >> 1);  // Approximates (x * 510) / graphWidth
 
           // For OSC2, simulate detune and handle octave differences
-          uint32_t phase2Temp = phase1;
-          // Apply detune (visual approximation)
-          phase2Temp += ((x * localState.params.osc2Detune) / 20);
-
-          // Apply Octave mapping visually
+          uint32_t phase2Temp = phase1 + ((x * localState.params.osc2Detune) >> 4);
           if (localState.params.osc2Octave > 0) {
             phase2Temp <<= localState.params.osc2Octave;
           } else if (localState.params.osc2Octave < 0) {
@@ -402,35 +412,22 @@ void displayUpdateTask(void *pvParameters) {
 
           int32_t sample1 = 0;
           if (localState.params.osc1WaveMorph < 255) {
-            uint8_t waveBase1 = localState.params.osc1WaveMorph >> 6; // 0-3
-            uint8_t waveBase2 = waveBase1 + 1;
-            if (waveBase2 > 3)
-              waveBase2 = 3;
-            uint8_t morphFract = (localState.params.osc1WaveMorph & 0x3F)
-                                 << 2; // 0-255
-
             int32_t s1a = uiGetWaveSample((WaveformType)waveBase1, phase1);
             int32_t s1b = uiGetWaveSample((WaveformType)waveBase2, phase1);
             sample1 = ((s1a * (255 - morphFract)) + (s1b * morphFract)) >> 8;
           }
 
           int32_t sample2 = uiGetWaveSample(localState.params.osc2Wave, phase2);
-
-          // If WAVEFORM_OFF is selected, it returns 0 amplitude, so mixing
-          // logic still works
-          int32_t mix = localState.params.mixOsc2;
-          int32_t vout =
-              ((sample1 * (100 - mix)) + (sample2 * mix)) / 100; // -128 to 127
+          int32_t vout = ((sample1 * (128 - mix)) + (sample2 * mix)) >> 7;
 
           // Map to Y coordinate
-          int y = graphCenterY - ((vout * graphHeightAmp) / 128);
+          int y = graphCenterY - ((vout * graphHeightAmp) >> 7);
 
           if (lastY != -1) {
-            u8g2->drawLine(graphStartX + x - 1, lastY, graphStartX + x, y);
-          } else {
-            u8g2->drawPixel(graphStartX + x, y);
+            u8g2->drawLine(lastX, lastY, graphStartX + x, y);
           }
           lastY = y;
+          lastX = graphStartX + x;
         }
 
         // 3. Small text below graph
@@ -464,39 +461,38 @@ void displayUpdateTask(void *pvParameters) {
 
         // Draw waveform (simulated real-time scope)
         static uint32_t scopePhase = 0;
-        uint32_t scopeInc = 5 + (localState.params.lfoRate / 5);
+        uint32_t scopeInc = 5 + (localState.params.lfoRate >> 2);
         scopePhase += scopeInc;
 
+        // Pre-calculate values outside loop
+        int32_t mix = localState.params.mixOsc2 + (localState.params.mixOsc2 >> 2);
+        uint8_t waveBase1 = localState.params.osc1WaveMorph >> 6;
+        uint8_t waveBase2 = (waveBase1 < 3) ? waveBase1 + 1 : 3;
+        uint8_t morphFract = (localState.params.osc1WaveMorph & 0x3F) << 2;
+
         int lastY = -1;
-        for (uint8_t x = 0; x < 128; x++) {
-          uint8_t phase = ((x * 8) + scopePhase) & 0xFF;
+        int lastX = 0;
+        // Draw every 2nd pixel for speed
+        for (uint8_t x = 0; x < 128; x += 2) {
+          uint8_t phase = ((x << 3) + scopePhase) & 0xFF;
           int32_t sample1 = 0;
           if (localState.params.osc1WaveMorph < 255) {
-            uint8_t waveBase1 = localState.params.osc1WaveMorph >> 6; // 0-3
-            uint8_t waveBase2 = waveBase1 + 1;
-            if (waveBase2 > 3)
-              waveBase2 = 3;
-            uint8_t morphFract = (localState.params.osc1WaveMorph & 0x3F)
-                                 << 2; // 0-255
-
             int32_t s1a = uiGetWaveSample((WaveformType)waveBase1, phase);
             int32_t s1b = uiGetWaveSample((WaveformType)waveBase2, phase);
             sample1 = ((s1a * (255 - morphFract)) + (s1b * morphFract)) >> 8;
           }
-          int32_t mix = localState.params.mixOsc2;
           int32_t sample2 = uiGetWaveSample(localState.params.osc2Wave, phase);
-          int32_t vout = ((sample1 * (100 - mix)) + (sample2 * mix)) / 100;
+          int32_t vout = ((sample1 * (128 - mix)) + (sample2 * mix)) >> 7;
 
-          int y = 20 - ((vout * 8) / 128);
-          if (y < 11)
-            y = 11;
-          if (y > 29)
-            y = 29;
+          int y = 20 - ((vout * 8) >> 7);
+          if (y < 11) y = 11;
+          if (y > 29) y = 29;
 
           if (lastY != -1) {
-            u8g2->drawLine(x - 1, lastY, x, y);
+            u8g2->drawLine(lastX, lastY, x, y);
           }
           lastY = y;
+          lastX = x;
         }
 
         u8g2->setFont(u8g2_font_5x7_tr);
@@ -582,5 +578,7 @@ void displayUpdateTask(void *pvParameters) {
 
     u8g2->sendBuffer();
     digitalToggle(LED_BUILTIN);
+#ifndef TEST_DISPLAY
   }
+#endif
 }

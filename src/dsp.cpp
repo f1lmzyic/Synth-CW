@@ -129,13 +129,20 @@ void sampleISR() {
       }
     }
   }
-  // Scale output
-  if (activeVoiceCount > 0)
-    totalEnvCurrent =
-        (totalEnvCurrent + activeVoiceCount / 2) / activeVoiceCount;
-  int32_t vout = activeVoiceCount ? (combinedVoiceOut * POLYPHONY) /
-                                        (POLYPHONY + activeVoiceCount)
-                                  : 0;
+  // Scale output using shift approximations to avoid division
+  // For small voice counts, use pre-calculated shifts
+  int32_t vout = 0;
+  if (activeVoiceCount > 0) {
+    // Approximate division by voice count using shifts
+    // 1: >>0, 2: >>1, 3: multiply by 85 >>8, 4: >>2
+    switch (activeVoiceCount) {
+      case 1: totalEnvCurrent = totalEnvCurrent; vout = combinedVoiceOut >> 1; break;
+      case 2: totalEnvCurrent >>= 1; vout = (combinedVoiceOut * 85) >> 8; break;
+      case 3: totalEnvCurrent = (totalEnvCurrent * 85) >> 8; vout = (combinedVoiceOut * 73) >> 8; break;
+      case 4: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
+      default: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
+    }
+  }
 
   // 7-9. Filter section
   int32_t cutoff = smoothCutoff * 2;

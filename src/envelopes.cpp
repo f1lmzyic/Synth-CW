@@ -107,7 +107,8 @@ int32_t processModEnvelope(const SynthParams &params) {
   int32_t step;
   switch (modEnvState) {
   case ENV_ATTACK:
-    step = (255 << 8) / (1 + params.modEnvAttack * 2);
+    // Use shift instead of division: shift = 1 + (param >> 4) gives range 1-8
+    step = (255 << 8) >> (1 + (params.modEnvAttack >> 4));
     modEnvValue += step;
     if (modEnvValue >= (255 << 8)) {
       modEnvValue = 255 << 8;
@@ -115,7 +116,7 @@ int32_t processModEnvelope(const SynthParams &params) {
     }
     break;
   case ENV_DECAY:
-    step = (255 << 8) / (1 + params.modEnvDecay * 2);
+    step = (255 << 8) >> (1 + (params.modEnvDecay >> 4));
     modEnvValue -= step;
     if (modEnvValue <= 0) {
       modEnvValue = 0;
@@ -123,7 +124,8 @@ int32_t processModEnvelope(const SynthParams &params) {
     }
     break;
   case ENV_RELEASE:
-    modEnvValue -= (255 << 8) / (1 + params.modEnvDecay);
+    step = (255 << 8) >> (1 + (params.modEnvDecay >> 5));
+    modEnvValue -= step;
     if (modEnvValue <= 0) {
       modEnvValue = 0;
       modEnvState = ENV_IDLE;
@@ -132,5 +134,6 @@ int32_t processModEnvelope(const SynthParams &params) {
   default:
     modEnvValue = 0;
   }
-  return ((modEnvValue >> 8) * params.modEnvAmount) / 64;
+  // Use >>6 instead of /64
+  return ((modEnvValue >> 8) * params.modEnvAmount) >> 6;
 }

@@ -16,254 +16,418 @@ QueueHandle_t msgOutQ;
 SemaphoreHandle_t CAN_TX_Semaphore;
 
 void fatalError() {
-  while (true) {
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-    for (volatile int i = 0; i < 100000; i++)
-      ;
-  }
+    while (true) {
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+        for (volatile int i = 0; i < 100000; i++);
+    }
 }
 
 void CAN_RX_ISR() {
-  uint8_t RX_Message_ISR[8];
-  uint32_t ID;
-  CAN_RX(ID, RX_Message_ISR);
-  xQueueSendFromISR(msgInQ, RX_Message_ISR, NULL);
+    uint8_t RX_Message_ISR[8];
+    uint32_t ID;
+    CAN_RX(ID, RX_Message_ISR);
+    xQueueSendFromISR(msgInQ, RX_Message_ISR, NULL);
 }
 
 void CAN_TX_ISR() { xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL); }
 
+#ifdef TEST_DECODE
+void decodeTask(void *pvParameters) {
+    uint8_t RX_Message[8];
+    // Test mode: single iteration, non-blocking receive
+    if (xQueueReceive(msgInQ, RX_Message, 0) != pdTRUE) return;
+#else
 [[noreturn]] void decodeTask(void *pvParameters) {
-  uint8_t RX_Message[8];
-  while (true) {
-    xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
-    MutexGuard lock(sysState.mutex);
-    if (lock) {
-      uint8_t msgType = RX_Message[0];
+    uint8_t RX_Message[8];
+    while (true) {
+        xQueueReceive(msgInQ, RX_Message, portMAX_DELAY);
+#endif
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            uint8_t msgType = RX_Message[0];
 
-      // Handshake messages: only update our left-neighbor position if we
-      // haven't completed our own handshake yet (eastOut still true).
-      // This prevents boards from corrupting their position when they receive
-      // {H} messages from boards to their RIGHT (which have higher IDs).
-      if (msgType == 'H') {
-        // Max-wins: only update if received position is higher than current.
-        // Prevents left-satellite's {H,0} from overwriting main's {H,1}
-        // at a right-side board that receives periodic broadcasts from all boards.
-        if (sysState.eastOut && (int16_t)RX_Message[1] > sysState.lastHandshakePos) {
-          sysState.lastHandshakePos = RX_Message[1];
-        }
-        continue;
-      }
-
-      // Main-board ID broadcast: all boards update so satellites know their
-      // relative octave for display
-      if (msgType == 'M') {
-        sysState.mainKeyboardId = RX_Message[1];
-        continue;
-      }
-
-      // Key messages only processed by the main board (or standalone board)
-      bool actAsMain = !sysState.hasLeft;
-      if (!actAsMain) {
-        continue;
-      }
-
-      uint8_t keyIndex = RX_Message[1];
-      uint8_t keyboardId = RX_Message[2];
-
-      // Calculate global key number (keyboardId * 12 + keyIndex)
-      uint16_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
-
-      // Copy for UI debug display
-      memcpy(sysState.RX_Message, RX_Message, 8);
-
-      if (msgType == 'P') {
-        // Key press - add to pressed keys array if not already present
-        bool found = false;
-        for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
-          if (sysState.pressedKeys[i] == globalKey) {
-            found = true;
-            break;
-          }
-        }
-        if (!found && sysState.pressedKeyCount < MAX_PRESSED_KEYS) {
-          sysState.pressedKeys[sysState.pressedKeyCount++] = globalKey;
-        }
-      } else if (msgType == 'R') {
-        // Key release - remove from pressed keys array
-        for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
-          if (sysState.pressedKeys[i] == globalKey) {
-            // Shift remaining keys down
-            for (uint8_t j = i; j < sysState.pressedKeyCount - 1; j++) {
-              sysState.pressedKeys[j] = sysState.pressedKeys[j + 1];
+            // Handshake messages: only update our left-neighbor position if we
+            // haven't completed our own handshake yet (eastOut still true).
+            // This prevents boards from corrupting their position when they receive
+            // {H} messages from boards to their RIGHT (which have higher IDs).
+            if (msgType == 'H') {
+                // Max-wins: only update if received position is higher than current.
+                // Prevents left-satellite's {H,0} from overwriting main's {H,1}
+                // at a right-side board that receives periodic broadcasts from all boards.
+                if (sysState.eastOut && (int16_t) RX_Message[1] > sysState.lastHandshakePos) {
+                    sysState.lastHandshakePos = RX_Message[1];
+                }
+#ifndef TEST_DECODE
+                continue;
+#else
+                return;
+#endif
             }
-            sysState.pressedKeyCount--;
-            break;
-          }
+
+            // Main-board ID broadcast: all boards update so satellites know their
+            // relative octave for display
+            if (msgType == 'M') {
+                sysState.mainKeyboardId = RX_Message[1];
+#ifndef TEST_DECODE
+                continue;
+#else
+                return;
+#endif
+            }
+
+            // Key messages only processed by the main board (or standalone board)
+            bool actAsMain = !sysState.hasLeft;
+            if (!actAsMain) {
+#ifndef TEST_DECODE
+                continue;
+#else
+                return;
+#endif
+            }
+
+            uint8_t keyIndex = RX_Message[1];
+            uint8_t keyboardId = RX_Message[2];
+
+            // Calculate global key number (keyboardId * 12 + keyIndex)
+            uint16_t globalKey = keyboardId * KEYS_PER_KEYBOARD + keyIndex;
+
+            // Copy for UI debug display
+            memcpy(sysState.RX_Message, RX_Message, 8);
+
+            if (msgType == 'P') {
+                // Key press - add to pressed keys array if not already present
+                bool found = false;
+                for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
+                    if (sysState.pressedKeys[i] == globalKey) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && sysState.pressedKeyCount < MAX_PRESSED_KEYS) {
+                    sysState.pressedKeys[sysState.pressedKeyCount++] = globalKey;
+                }
+            } else if (msgType == 'R') {
+                // Key release - remove from pressed keys array
+                for (uint8_t i = 0; i < sysState.pressedKeyCount; i++) {
+                    if (sysState.pressedKeys[i] == globalKey) {
+                        // Shift remaining keys down
+                        for (uint8_t j = i; j < sysState.pressedKeyCount - 1; j++) {
+                            sysState.pressedKeys[j] = sysState.pressedKeys[j + 1];
+                        }
+                        sysState.pressedKeyCount--;
+                        break;
+                    }
+                }
+            }
         }
-      }
+#ifndef TEST_DECODE
     }
-  }
+#endif
 }
 
-[[noreturn]] void CAN_TX_Task(void *pvParameters) {
-  uint8_t msgOut[8];
-  while (true) {
-    xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
-    if (xSemaphoreTake(CAN_TX_Semaphore, pdMS_TO_TICKS(10)) == pdTRUE) {
-      // Always transmit - runtime logic in hw.cpp decides what to queue
-      CAN_TX(0x123, msgOut);
+#ifdef TEST_CANTX
+void CAN_TX_Task(void *pvParameters) {
+    uint8_t msgOut[8];
+    // Test mode: single iteration, non-blocking
+    if (xQueueReceive(msgOutQ, msgOut, 0) != pdTRUE) return;
+    if (xSemaphoreTake(CAN_TX_Semaphore, 0) == pdTRUE) {
+        CAN_TX(0x123, msgOut);
     }
-  }
 }
+#else
+[[noreturn]] void CAN_TX_Task(void *pvParameters) {
+    uint8_t msgOut[8];
+    while (true) {
+        xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
+        if (xSemaphoreTake(CAN_TX_Semaphore, pdMS_TO_TICKS(10)) == pdTRUE) {
+            // Always transmit - runtime logic in hw.cpp decides what to queue
+            CAN_TX(0x123, msgOut);
+        }
+    }
+}
+#endif
 
 // Override default SystemClock_Config to disable LSE, which might be
 // missing/broken and causing a hang
 extern "C" void SystemClock_Config(void) {
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {};
-  RCC_OscInitTypeDef RCC_OscInitStruct = {};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {};
+    RCC_OscInitTypeDef RCC_OscInitStruct = {};
+    RCC_PeriphCLKInitTypeDef PeriphClkInit = {};
 
-  /* MSI is enabled after System reset, activate PLL with MSI as source */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI; // Removed LSE
-  RCC_OscInitStruct.LSEState = RCC_LSE_OFF;
-  RCC_OscInitStruct.MSIState = RCC_MSI_ON;
-  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
-  RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
-  RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 40;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
-  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
-  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+    /* MSI is enabled after System reset, activate PLL with MSI as source */
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI; // Removed LSE
+    RCC_OscInitStruct.LSEState = RCC_LSE_OFF;
+    RCC_OscInitStruct.MSIState = RCC_MSI_ON;
+    RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
+    RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
+    RCC_OscInitStruct.PLL.PLLM = 1;
+    RCC_OscInitStruct.PLL.PLLN = 40;
+    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
+    RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+    RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
 
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
-    while (true)
-      ;
-  }
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+        while (true);
+    }
 
-  /* Initializes the CPU, AHB and APB buses clocks */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
-                                RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
-    while (true)
-      ;
-  }
+    /* Initializes the CPU, AHB and APB buses clocks */
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                                  RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
+        while (true);
+    }
 
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
-  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLLSAI1;
-  PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
-  PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
-  PeriphClkInit.PLLSAI1.PLLSAI1N = 24;
-  PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
-  PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
-  PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
-  PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_48M2CLK;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
-    while (true)
-      ;
-  }
-  /* Configure the main internal regulator output voltage */
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK) {
-    while (true)
-      ;
-  }
+    PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+    PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLLSAI1;
+    PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
+    PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
+    PeriphClkInit.PLLSAI1.PLLSAI1N = 24;
+    PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
+    PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
+    PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
+    PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_48M2CLK;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
+        while (true);
+    }
+    /* Configure the main internal regulator output voltage */
+    if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK) {
+        while (true);
+    }
 }
 
 void setup() {
-  hwInit();
+    hwInit();
 
-  sysState.mutex = xSemaphoreCreateMutex();
-  if (sysState.mutex == nullptr) {
-    fatalError();
-  }
+    sysState.mutex = xSemaphoreCreateMutex();
+    if (sysState.mutex == nullptr) {
+        fatalError();
+    }
 
-  // Init state
-  sysState.menuMode = false;
-  sysState.activePage = PAGE_OSC;
-  sysState.viewMode = 0; // Default to performance view
-  sysState.lastHandshakePos = -1;
-  sysState.keyboardId = 0;   // Default keyboard ID
-  sysState.mainKeyboardId = 0; // Default: board 0 is main
-  sysState.octaveOffset = 0; // Default octave (middle C = C4)
+    // Init state
+    sysState.menuMode = false;
+    sysState.activePage = PAGE_OSC;
+    sysState.viewMode = 0; // Default to performance view
+    sysState.lastHandshakePos = -1;
+    sysState.keyboardId = 0; // Default keyboard ID
+    sysState.mainKeyboardId = 0; // Default: board 0 is main
+    sysState.octaveOffset = 0; // Default octave (middle C = C4)
 
-  // Multi-keyboard: assume standalone until handshake determines otherwise
-  sysState.hasLeft = false;
-  sysState.hasRight =
-      false; // No right neighbor = plays audio (standalone mode)
-  sysState.prevWestIn = false;
-  sysState.prevEastIn = false;
-  sysState.eastOut = true;
-  sysState.lastConnectionChangeTime = 0;
+    // Multi-keyboard: assume standalone until handshake determines otherwise
+    sysState.hasLeft = false;
+    sysState.hasRight =
+            false; // No right neighbor = plays audio (standalone mode)
+    sysState.prevWestIn = false;
+    sysState.prevEastIn = false;
+    sysState.eastOut = true;
+    sysState.lastConnectionChangeTime = 0;
 
-  // Initialize polyphony state
-  sysState.pressedKeyCount = 0;
-  memset(sysState.pressedKeys, 0xFF, sizeof(sysState.pressedKeys));
+    // Initialize polyphony state
+    sysState.pressedKeyCount = 0;
+    memset(sysState.pressedKeys, 0xFF, sizeof(sysState.pressedKeys));
 
-  // Initialize pitch bend
-  sysState.pitchBendEnabled = false;  // Disabled by default
-  sysState.displayPitchBend = 0;
+    // Initialize pitch bend
+    sysState.pitchBendEnabled = false; // Disabled by default
+    sysState.displayPitchBend = 0;
 
-  dspInit();
+    dspInit();
 
-  uiInit();
+    uiInit();
 
-  msgInQ = xQueueCreate(36, 8);
-  msgOutQ = xQueueCreate(36, 8);
-  CAN_TX_Semaphore = xSemaphoreCreateCounting(3, 3);
+#ifdef TEST_SCANKEYS
+    // Larger queue for worst-case testing (32 iterations × 12 messages)
+    msgInQ = xQueueCreate(384, 8);
+    msgOutQ = xQueueCreate(384, 8);
+#else
+    msgInQ = xQueueCreate(36, 8);
+    msgOutQ = xQueueCreate(36, 8);
+#endif
+    CAN_TX_Semaphore = xSemaphoreCreateCounting(3, 3);
 
-  if (msgInQ == nullptr || msgOutQ == nullptr || CAN_TX_Semaphore == nullptr) {
-    fatalError();
-  }
+    if (msgInQ == nullptr || msgOutQ == nullptr || CAN_TX_Semaphore == nullptr) {
+        fatalError();
+    }
 
-  CAN_Init(CAN_LOOPBACK);
-  setCANFilter(0x123, 0x7ff);
-  CAN_RegisterRX_ISR(CAN_RX_ISR);
-  CAN_RegisterTX_ISR(CAN_TX_ISR);
+    CAN_Init(CAN_LOOPBACK);
+    setCANFilter(0x123, 0x7ff);
+#ifndef DISABLE_ISRS
+    CAN_RegisterRX_ISR(CAN_RX_ISR);
+    CAN_RegisterTX_ISR(CAN_TX_ISR);
+#endif
 
-  CAN_Start();
+    CAN_Start();
 
-  if (xTaskCreate(decodeTask, "decode", 256, nullptr, 3, NULL) != pdPASS) {
-    fatalError();
-  }
-  if (xTaskCreate(CAN_TX_Task, "canTx", 256, nullptr, 2, nullptr) != pdPASS) {
-    fatalError();
-  }
+#ifndef DISABLE_THREADS
+    if (xTaskCreate(decodeTask, "decode", 256, nullptr, 3, NULL) != pdPASS) {
+        fatalError();
+    }
+    if (xTaskCreate(CAN_TX_Task, "canTx", 256, nullptr, 2, nullptr) != pdPASS) {
+        fatalError();
+    }
+#endif
 
-  // Configure sample timer for 22kHz
-  sampleTimer = new HardwareTimer(TIM1);
-  sampleTimer->setOverflow(SAMPLE_RATE, HERTZ_FORMAT);
-  sampleTimer->attachInterrupt(sampleISR);
-  // Timer will be resumed by an initialization task after the scheduler starts
+    // Configure sample timer for 22kHz
+    sampleTimer = new HardwareTimer(TIM1);
+    sampleTimer->setOverflow(SAMPLE_RATE, HERTZ_FORMAT);
+#ifndef DISABLE_ISRS
+    sampleTimer->attachInterrupt(sampleISR);
+#endif
+    // Timer will be resumed by an initialization task after the scheduler starts
 
-  // Create tasks
-  if (xTaskCreate(scanKeysTask, "scanKeys", 256, nullptr, 2, &scanKeysHandle) !=
-      pdPASS) {
-    fatalError();
-  }
-  if (xTaskCreate(displayUpdateTask, "displayUpdate", 256, nullptr, 1,
-                  nullptr) != pdPASS) {
-    fatalError();
-  }
+#ifndef DISABLE_THREADS
+    // Create tasks
+    if (xTaskCreate(scanKeysTask, "scanKeys", 256, nullptr, 2, &scanKeysHandle) !=
+        pdPASS) {
+        fatalError();
+    }
+    if (xTaskCreate(displayUpdateTask, "displayUpdate", 256, nullptr, 1,
+                    nullptr) != pdPASS) {
+        fatalError();
+    }
 
-  // Create a task to start the timer safely after the scheduler has started
-  TaskHandle_t timerTaskHandle;
-  xTaskCreate(
-      [](void *pvParameters) {
-        sampleTimer->resume();
-        vTaskDelete(nullptr);
-      },
-      "startTimer", 64, nullptr, 4, &timerTaskHandle);
+    // Create a task to start the timer safely after the scheduler has started
+    TaskHandle_t timerTaskHandle;
+    xTaskCreate(
+        [](void *pvParameters) {
+            sampleTimer->resume();
+            vTaskDelete(nullptr);
+        },
+        "startTimer", 64, nullptr, 4, &timerTaskHandle);
 
-  if (timerTaskHandle == nullptr) {
-    fatalError();
-  }
+    if (timerTaskHandle == nullptr) {
+        fatalError();
+    }
 
-  vTaskStartScheduler();
+    vTaskStartScheduler();
+#endif
+
+    // ============================================================================
+    // Execution Time Measurement
+    // ============================================================================
+#ifdef TEST_SCANKEYS
+    Serial.begin(115200);
+    delay(100);
+    Serial.println("Testing scanKeysTask worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        scanKeysTask(nullptr);
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
+
+#ifdef TEST_DISPLAY
+    Serial.begin(115200);
+    delay(100);
+    Serial.println("Testing displayUpdateTask worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        displayUpdateTask(nullptr);
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
+
+#ifdef TEST_DECODE
+    Serial.begin(115200);
+    delay(100);
+    // Pre-fill the queue with messages to decode
+    for (int i = 0; i < TEST_ITERATIONS; i++) {
+        uint8_t testMsg[8] = {'P', (uint8_t) (i % 12), 0, 0, 0, 0, 0, 0};
+        xQueueSend(msgInQ, testMsg, 0);
+    }
+    Serial.println("Testing decodeTask worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        decodeTask(nullptr);
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
+
+#ifdef TEST_CANTX
+    Serial.begin(115200);
+    delay(100);
+    // Pre-fill the queue with messages to transmit
+    for (int i = 0; i < TEST_ITERATIONS; i++) {
+        uint8_t testMsg[8] = {'P', (uint8_t) (i % 12), 0, 0, 0, 0, 0, 0};
+        xQueueSend(msgOutQ, testMsg, 0);
+    }
+    // Give all semaphores so CAN_TX_Task won't block
+    for (int i = 0; i < TEST_ITERATIONS; i++) {
+        xSemaphoreGive(CAN_TX_Semaphore);
+    }
+    Serial.println("Testing CAN_TX_Task worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        CAN_TX_Task(nullptr);
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
+
+#ifdef TEST_SAMPLEISR
+    Serial.begin(115200);
+    delay(100);
+    // Set up worst-case: all voices active with complex parameters
+    {
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            sysState.pressedKeyCount = POLYPHONY;
+            for (int i = 0; i < POLYPHONY; i++) {
+                sysState.pressedKeys[i] = i;
+            }
+        }
+    }
+    Serial.println("Testing sampleISR worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        sampleISR();
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
 }
 
-void loop() {}
+void loop() {
+}

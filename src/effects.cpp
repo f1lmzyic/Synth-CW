@@ -20,7 +20,8 @@ int32_t processDelay(EffectsState *state, int32_t input, uint8_t delayTime,
   if (delayTime == 0)
     return input;
 
-  uint32_t delayLen = ((uint32_t)delayTime * DELAY_BUFFER_SIZE) / 128;
+  // Use >>7 instead of /128
+  uint32_t delayLen = ((uint32_t)delayTime * DELAY_BUFFER_SIZE) >> 7;
   if (delayLen < 100)
     delayLen = 100;
 
@@ -70,8 +71,8 @@ int32_t processChorus(EffectsState *state, int32_t input, uint8_t rate,
   state->chorusBuffer[state->chorusWritePos] = input;
   state->chorusWritePos = (state->chorusWritePos + 1) % CHORUS_BUFFER_SIZE;
 
-  // Mix wet signal
-  int32_t wet = (chorusOut * mix) / 100;
+  // Mix wet signal (use >>7 instead of /100, scale mix)
+  int32_t wet = (chorusOut * (mix + (mix >> 2))) >> 7;
   return input + (wet >> 1);
 }
 
