@@ -97,30 +97,9 @@ Total CPU utilisation = 68.23%
 ---
 ## Critical Instant Analysis
 
-The scheduler uses fixed priorities, with all interrupts above the thread level. In the current implementation, `decodeTask` has priority 3, `scanKeysTask` and `CAN_TX_Task` both have priority 2, and `displayUpdateTask` has priority 1. The audio path runs in `sampleISR` from a 22 kHz timer interrupt, and CAN receive/transmit are also handled by interrupts. Under rate monotonic analysis, the critical instant is when all tasks and interrupts are released at the same time. :contentReference[oaicite:0]{index=0} :contentReference[oaicite:1]{index=1}
+The system uses fixed priorities, with interrupts above the task level. `decodeTask` has the highest task priority, `scanKeysTask` and `CAN_TX_Task` are next, and `displayUpdateTask` has the lowest priority.
 
-Using the measured WCET values, the response-time check is straightforward. For each task, the response time must satisfy \(R_i \leq T_i\). For the highest-priority thread, `decodeTask`, there is no higher-priority thread interference, so:
-\
-\(R_{decode} = C_{decode} = 11\ \mu s \leq 25.2\ ms\)
-
-For `scanKeysTask`, the only higher-priority thread is `decodeTask`, so:
-\
-\(R_{scan} = C_{scan} + \left\lceil \frac{R_{scan}}{T_{decode}} \right\rceil C_{decode}\)
-\
-Using \(C_{scan}=282\ \mu s\), \(C_{decode}=11\ \mu s\), and \(T_{decode}=25.2\ ms\), this gives:
-\
-\(R_{scan} = 282 + 1 \cdot 11 = 293\ \mu s \leq 20\ ms\)
-
-For `displayUpdateTask`, both `decodeTask` and `scanKeysTask` can interfere:
-\
-\(R_{disp} = C_{disp} + \left\lceil \frac{R_{disp}}{T_{decode}} \right\rceil C_{decode} + \left\lceil \frac{R_{disp}}{T_{scan}} \right\rceil C_{scan}\)
-
-Using \(C_{disp}=16040\ \mu s\), \(C_{decode}=11\ \mu s\), \(T_{decode}=25.2\ ms\), \(C_{scan}=282\ \mu s\), and \(T_{scan}=20\ ms\), one safe check is:
-\
-\(R_{disp} \approx 16040 + 1 \cdot 11 + 1 \cdot 282 = 16333\ \mu s = 16.33\ ms \leq 100\ ms\)
-
-`CAN_TX_Task` shares priority 2 with `scanKeysTask`, so it is not a strict single-priority-step RM case. Even so, its measured execution time is only \(4\ \mu s\), with a minimum initiation interval of 60 ms, so it has a very large timing margin. The interrupt-side tasks are also well within their minimum inter-arrival times: `sampleISR` uses \(22\ \mu s\) within a 45.45 us interval, `CAN_RX_ISR` uses \(3\ \mu s\) within 0.7 ms, and `CAN_TX_ISR` uses \(1\ \mu s\) within 0.7 ms. On this basis, all measured deadlines are met under the worst-case release pattern. 
-
+For the critical instant analysis, the worst case is when all tasks and interrupts are released together. Using the measured WCET values, each task still completes within its minimum initiation interval. `sampleISR` is the most timing-critical part of the system, but it remains within its available time budget. The same is true for the remaining tasks, so the measured schedule meets all deadlines.
 
 ---
 
