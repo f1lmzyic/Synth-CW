@@ -190,6 +190,10 @@ struct SystemState {
   // Pitch bend for UI display (read-only, set by hw.cpp)
   int8_t displayPitchBend;
   bool pitchBendEnabled;
+
+  // Joystick analog state (set by scanJoystickTask)
+  int16_t joystickX;
+  int16_t joystickY;
 };
 
 // Extern declaration for the shared state

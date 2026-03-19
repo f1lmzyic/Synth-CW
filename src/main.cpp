@@ -7,6 +7,10 @@
 #include <ES_CAN.h>
 #include <STM32FreeRTOS.h>
 
+#if TEST_MODE
+void timingAnalysis();
+#endif
+
 SystemState sysState;
 
 HardwareTimer *sampleTimer;
@@ -212,14 +216,13 @@ void setup() {
     // Init state
     sysState.activePage = PAGE_PERFORMANCE;
     sysState.lastHandshakePos = -1;
-    sysState.keyboardId = 0; // Default keyboard ID
-    sysState.mainKeyboardId = 0; // Default: board 0 is main
-    sysState.octaveOffset = 0; // Default octave (middle C = C4)
+    sysState.keyboardId = 0;
+    sysState.mainKeyboardId = 0;
+    sysState.octaveOffset = 0;
 
     // Multi-keyboard: assume standalone until handshake determines otherwise
     sysState.hasLeft = false;
-    sysState.hasRight =
-            false; // No right neighbor = plays audio (standalone mode)
+    sysState.hasRight = false;
     sysState.prevWestIn = false;
     sysState.prevEastIn = false;
     sysState.eastOut = true;
@@ -269,13 +272,11 @@ void setup() {
     }
 #endif
 
-    // Configure sample timer for 22kHz
     sampleTimer = new HardwareTimer(TIM1);
     sampleTimer->setOverflow(SAMPLE_RATE, HERTZ_FORMAT);
 #ifndef DISABLE_ISRS
     sampleTimer->attachInterrupt(sampleISR);
 #endif
-    // Timer will be resumed by an initialization task after the scheduler starts
 
 #ifndef DISABLE_THREADS
     // Create tasks
@@ -283,12 +284,16 @@ void setup() {
         pdPASS) {
         fatalError();
     }
+    if (
+  xTaskCreate(pitchBendTask, "pitchBend", 256, nullptr, 1, &pitchBendHandle) !=
+        pdPASS) {
+        fatalError();
+        }
     if (xTaskCreate(displayUpdateTask, "displayUpdate", 256, nullptr, 1,
                     nullptr) != pdPASS) {
         fatalError();
     }
 
-    // Create a task to start the timer safely after the scheduler has started
     TaskHandle_t timerTaskHandle;
     xTaskCreate(
         [](void *pvParameters) {

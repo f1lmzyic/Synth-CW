@@ -56,7 +56,7 @@ void dspUpdateParams() {
 }
 
 void sampleISR() {
-  // 1-4. LFO, Noise, S&H, Mod envelope
+    // 1-4. LFO, Noise, S&H, Mod envelope
   int32_t lfoVal = processLFO(&lfoState, localParams.lfoRate);
   int32_t noiseVal = generateNoise(&lfoState);
   processSampleHold(&lfoState, noiseVal);
