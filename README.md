@@ -24,10 +24,7 @@ Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-boar
 
 ## Overview
 
-This project implements a real-time 4-voice polyphonic music synthesizer on an STM32L432KC platform using FreeRTOS. The system handles note input, 22 kHz 8-bit PWM audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
-
-The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive. The synthesiser can be configured during compilation to act as a sender or receiver module, allowing up to 3 keyboards to be stacked via CAN bus.
-
+We implement a polyphonic music synthesizer. The system handles multiple note input, using a 22 kHz PWM audio generation. It also features hot swappable connecting other keyboards and communication via the CAN bus.
 
 ---
 
@@ -71,7 +68,7 @@ This section gives the minimum initiation interval for each task and ISR, togeth
 
 ### 2.2 Worst Case Execution Time / CPU Utilization
 
-The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval. *(Note: CAN ISR times include the measured base loop overhead plus the ~4us and ~3us actual hardware ISR function overhead).*
+The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval.
 
 | Task / ISR          | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
 |---------------------|----------:|----------------------------:|--------------------:|
@@ -94,24 +91,7 @@ CPU utilisation percentages are shown in the Task Characterization table above. 
 
 ---
 
-## Critical Instant Analysis
-
-Under rate monotonic scheduling (RMS), priorities are assigned inversely to period: shorter period = higher priority. The critical instant occurs when all tasks are released simultaneously, creating maximum interference.
-
-### Priority Assignment (Rate Monotonic)
-
-| Priority | Task / ISR | Period (T) | WCET (C) |
-|:--------:|------------|------------|----------|
-| Highest  | `sampleISR` | 45 us | 40 us |
-| 1        | `scanKeysTask` | 20 ms | 159 us |
-| 2        | `pitchBendTask` | 50 ms | 13 us |
-| 3        | `decodeTask` | 25.2 ms (event) | 11 us |
-| 4        | `CAN_TX_Task` | 60 ms (event) | 4 us |
-| Lowest   | `displayUpdateTask` | 100 ms | 16149 us |
-
-### Response Time Analysis
-
-For each task, the worst-case response time R must satisfy R ≤ T (deadline = period).
+## Response Time Analysis
 
 **sampleISR (Timer Interrupt):**
 - Runs at hardware interrupt level, pre-empts all tasks
@@ -164,28 +144,58 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
 
 ### Resource Dependency Graph
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   CAN_RX_ISR    │────>│     msgInQ      │<────│   decodeTask    │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-┌─────────────────┐     ┌─────────────────┐              │
-│   CAN_TX_ISR    │────>│CAN_TX_Semaphore │<────┐        │
-└─────────────────┘     └─────────────────┘     │        │
-                                                │        ▼
-┌─────────────────┐     ┌─────────────────┐     │  ┌─────────────────┐
-│  scanKeysTask   │────>│     msgOutQ     │<────┼──│  CAN_TX_Task    │
-└────────┬────────┘     └─────────────────┘     │  └─────────────────┘
-         │                                      │
-         │              ┌─────────────────┐     │
-         └─────────────>│  sysState.mutex │<────┴──────────┐
-                        └─────────────────┘                │
-                              ▲     ▲                      │
-         ┌────────────────────┘     └──────────────┐       │
-         │                                         │       │
-┌────────┴────────┐                        ┌───────┴───────┴───────┐
-│ pitchBendTask   │                        │  displayUpdateTask    │
-└─────────────────┘                        └───────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ISRs["Interrupt Service Routines"]
+        CAN_RX_ISR["CAN_RX_ISR"]
+        CAN_TX_ISR["CAN_TX_ISR"]
+        sampleISR["sampleISR"]
+    end
+
+    subgraph Resources["Shared Resources"]
+        msgInQ[("msgInQ<br/>(FreeRTOS Queue)")]
+        msgOutQ[("msgOutQ<br/>(FreeRTOS Queue)")]
+        CAN_TX_Sem[("CAN_TX_Semaphore<br/>(Counting Sem)")]
+        mutex[("sysState.mutex<br/>(FreeRTOS Mutex)")]
+        voices[("voices[]<br/>(volatile)")]
+        pitchBend[("pitchBendValue<br/>(atomic)")]
+    end
+
+    subgraph Tasks["FreeRTOS Tasks"]
+        decodeTask["decodeTask"]
+        CAN_TX_Task["CAN_TX_Task"]
+        scanKeysTask["scanKeysTask"]
+        pitchBendTask["pitchBendTask"]
+        scanJoystickTask["scanJoystickTask"]
+        displayUpdateTask["displayUpdateTask"]
+    end
+
+    %% ISR connections
+    CAN_RX_ISR -->|"xQueueSendFromISR"| msgInQ
+    CAN_TX_ISR -->|"xSemaphoreGiveFromISR"| CAN_TX_Sem
+    sampleISR -->|"read"| voices
+    sampleISR -->|"read"| pitchBend
+
+    %% Task to resource connections
+    decodeTask -->|"xQueueReceive"| msgInQ
+    decodeTask -->|"lock"| mutex
+
+    CAN_TX_Task -->|"xQueueReceive"| msgOutQ
+    CAN_TX_Task -->|"xSemaphoreTake"| CAN_TX_Sem
+
+    scanKeysTask -->|"xQueueSend"| msgInQ
+    scanKeysTask -->|"xQueueSend"| msgOutQ
+    scanKeysTask -->|"lock"| mutex
+
+    pitchBendTask -->|"lock"| mutex
+    pitchBendTask -->|"atomic write"| pitchBend
+
+    scanJoystickTask -->|"lock"| mutex
+
+    displayUpdateTask -->|"lock"| mutex
+
+    %% Voice engine (called from scanKeysTask via dspUpdateParams)
+    scanKeysTask -.->|"writes via<br/>voiceEngineUpdateParams"| voices
 ```
 
 ### Analysis by Deadlock Condition
@@ -226,14 +236,15 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
 
 | Stage | Function |
 |---|---|
-| **Voice allocation** | 4-voice polyphonic allocator with round-robin assignment, per-voice phase/ADSR state |
-| **Oscillator section** | Generates the base sound using OSC1 (waveform morphing), OSC2 (with detune/hard-sync), and the sub-oscillator |
+| **Voice allocation** | 8-voice polyphonic allocator with round-robin assignment, per-voice phase/ADSR state |
+| **Oscillator section** | Generates the base sound using OSC1 (PolyBLEP morphing), OSC2 (with detune/hard-sync), and the sub-oscillator |
 | **Additional sources** | Adds noise (32-bit LFSR) and ring modulation for more varied timbre |
 | **Modulation** | Applies ADSR envelope (volume), AD envelope (modulation), LFO (pitch/filter targets), glide, and pitch bend |
 | **Filter stage** | Three models: Standard SVF (LP/HP/BP/Notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
 | **Nonlinear shaping** | Applies drive and wavefolding for stronger harmonic colouring |
-| **Effects** | Adds delay (8192-sample), chorus (2048-sample modulated delay), bit-crusher, and decimator |
+| **Effects** | Adds delay (8192-sample), chorus (2048-sample BDD), bit-crusher, and decimator |
 | **Output** | Scales and writes the final audio signal (22 kHz, 8-bit PWM) to the output path |
+| **Patch Memory** | Save and load 16 presets to STM32 flash with CRC validation |
 
 ---
 
@@ -257,9 +268,7 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 - Performance view (shows the note being played, volume level, waveform preview, and octave)
 - Oscilloscope view (real-time animated waveform display with key and pitch bend status)
 - Envelope visualization (displayed within the ENV parameter page)
-
-### Parameter Pages
-
+- OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
 - PERF page (Performance: waveform preview, octave control, volume)
 - OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
 - OSC2 page (Sub-oscillator, noise, ring modulation, wavefolder)
@@ -271,8 +280,6 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 ---
 
 ## Advanced Features
-
-This section highlights the key differentiating features that go beyond the basic requirements.
 
 | Feature | Description |
 |---|---|
