@@ -11,7 +11,7 @@ Real-time STM32 synthesizer with polyphony, live control, OLED UI, and CAN-based
 - [Task Characterization](#task-characterization)
   - [2.1 Minimum Initiation Intervals](#21-minimum-initiation-intervals)
   - [2.2 Worst Case Execution Time / CPU Utilization](#22-worst-case-execution-time--cpu-utilization)
-- [CPU Utilisation by Task](#cpu-utilisation-by-task)
+- [CPU Utilisation by Task](#cpu-utilisation-percentage-plot)
 - [Critical Instant Analysis](#critical-instant-analysis)
 - [Shared Data Structures and Synchronisation](#shared-data-structures-and-synchronisation)
 - [Deadlock Analysis](#deadlock-analysis)
