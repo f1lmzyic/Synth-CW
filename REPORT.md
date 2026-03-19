@@ -203,9 +203,10 @@ Compared with the earlier flat layout, the interface now uses a multi-page menu 
 
 | Feature | Description |
 |---|---|
-| **Polyphony** | Plays multiple notes at the same time |
-| **Voice stealing** | Reuses voices when all are busy |
-| **Wave morphing** | Smoothly changes the OSC1 waveform |
-| **Pitch bend** | Adds real-time control during play |
-| **Built-in effects** | Extends the sound beyond the dry synth signal |
-
+| **Two-oscillator synthesis engine** | Combines a morphing main oscillator with a second oscillator for detune, octave offset, and sync effects |
+| **Extended tone sources** | Includes sub-oscillator, noise generation, and ring modulation for a wider sound range |
+| **Configurable filter section** | Supports multiple filter models, selectable filter modes, and controllable resonance/cutoff shaping |
+| **Nonlinear sound shaping** | Adds drive and wavefolding to produce stronger and less clean timbres when needed |
+| **Modulation system** | Uses envelope, modulation envelope, LFO, sample-and-hold, and glide to animate pitch and filter behaviour |
+| **Built-in effects processing** | Provides delay, chorus, decimation, and bitcrushing inside the synth engine |
+| **Linked-board support** | Allows the system to operate with neighbouring boards in a larger setup |
