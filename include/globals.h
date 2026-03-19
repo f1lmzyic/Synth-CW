@@ -3,7 +3,7 @@
 #include <STM32FreeRTOS.h>
 #include <bitset>
 
-// #define TEST_SCANKEYS     // Test scanKeysTask worst-case (12 key messages) - 471 us
+// #define TEST_SCANKEYS     // Test scanKeysTask worst-case (12 key messages) - 143 us
 // #define TEST_DISPLAY      // Test displayUpdateTask worst-case - 16674 us
 // #define TEST_DECODE       // Test decodeTask worst-case - 11us
 // #define TEST_CANTX        // Test CAN_TX_Task worst-case - 4 us

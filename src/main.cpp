@@ -7,10 +7,6 @@
 #include <ES_CAN.h>
 #include <STM32FreeRTOS.h>
 
-#if TEST_MODE
-void timingAnalysis();
-#endif
-
 SystemState sysState;
 
 HardwareTimer *sampleTimer;
@@ -80,7 +76,7 @@ void decodeTask(void *pvParameters) {
             }
 
             // Key messages only processed by the main board (or standalone board)
-            bool actAsMain = !sysState.hasLeft;
+            bool actAsMain = !sysState.hasRight;
             if (!actAsMain) {
 #ifndef TEST_DECODE
                 continue;
