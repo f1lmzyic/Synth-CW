@@ -2,7 +2,23 @@
 
 Real-time STM32 synthesizer with polyphony, live control, OLED UI, and CAN-based multi-board support.
 
+---
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Task Identification](#task-identification)
+- [Task Characterization](#task-characterization)
+  - [2.1 Minimum Initiation Intervals](#21-minimum-initiation-intervals)
+  - [2.2 Worst Case Execution Time / CPU Utilization](#22-worst-case-execution-time--cpu-utilization)
+- [CPU Utilisation by Task](#cpu-utilisation-by-task)
+- [Critical Instant Analysis](#critical-instant-analysis)
+- [Shared Data Structures and Synchronisation](#shared-data-structures-and-synchronisation)
+- [Deadlock Analysis](#deadlock-analysis)
+- [Audio Pipeline](#audio-pipeline)
+- [Controls and UI](#controls-and-ui)
+  - [Display Pages](#display-pages)
+- [Advanced Features](#advanced-features)
 
 ---
 
@@ -16,7 +32,6 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 
 ## Task Identification
 
-
 | Task / ISR | Type | FreeRTOS Priority | Trigger | Purpose |
 |---|---|---:|---|---|
 | `sampleISR` | Timer interrupt | - | 22 kHz hardware timer | Audio generation: modulation, voice mix, filter/effects, output write |
@@ -27,14 +42,13 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 | `CAN_RX_ISR` | Hardware interrupt | - | Event-driven | Push received CAN frame into `msgInQ` |
 | `CAN_TX_ISR` | Hardware interrupt | - | Event-driven | Release TX mailbox via `CAN_TX_Semaphore` |
 
-
+---
 
 ## Task Characterization
 
 This section outlines each task in terms of its theoretical minimum initiation interval and measured maximum execution time, in line with the coursework requirements.
 
 ### 2.1 Minimum Initiation Intervals
-
 
 | Task / ISR | Minimum initiation interval | Assumptions used |
 |---|---:|---|
@@ -46,8 +60,7 @@ This section outlines each task in terms of its theoretical minimum initiation i
 | `decodeTask` | **25.2 ms** | `msgInQ` length is 36. Under worst-case CAN traffic, the queue can fill in \(36 \times 0.7 = 25.2\) ms. |
 | `CAN_TX_Task` | **60 ms** | `scanKeysTask` runs every 20 ms and can generate up to 12 outgoing messages each cycle, so a 36-item `msgOutQ` can fill in 60 ms. |
 
-### 2.2 Worst Case Execution Time/CPU Utilization
-
+### 2.2 Worst Case Execution Time / CPU Utilization
 
 | Task / ISR | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
 |---|---:|---:|---:|
@@ -60,12 +73,17 @@ This section outlines each task in terms of its theoretical minimum initiation i
 | `CAN_TX_Task` | 4 | 36 exec / 60 ms | 0.24 |
 
 Total CPU utilisation = 68.23%
+
+---
+
 ## CPU Utilisation by Task
 
 <p align="center">
   <img src="cpu_utilisation.png" width="700">
 </p>
 
+
+---
 
 ## Audio Pipeline
 
@@ -79,6 +97,8 @@ Total CPU utilisation = 68.23%
 | **Filter** | Filter stage with cutoff and resonance control |
 | **Effects** | Delay, chorus, bit reduction, and decimation |
 | **Output** | Final level scaling and audio output |
+
+---
 
 ## Controls and UI
 
@@ -99,6 +119,8 @@ Total CPU utilisation = 68.23%
 - Envelope page
 - Modulation page
 - Effects page
+
+---
 
 ## Advanced Features
 
