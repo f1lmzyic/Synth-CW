@@ -183,9 +183,9 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
                               ▲     ▲                      │
          ┌────────────────────┘     └──────────────┐       │
          │                                         │       │
-┌────────┴────────┐  ┌─────────────────┐  ┌───────┴───────┴───────┐
-│ pitchBendTask   │  │  displayUpdateTask    │
-└─────────────────┘  └───────────────────────┘
+┌────────┴────────┐                        ┌───────┴───────┴───────┐
+│ pitchBendTask   │                        │  displayUpdateTask    │
+└─────────────────┘                        └───────────────────────┘
 ```
 
 ### Analysis by Deadlock Condition
