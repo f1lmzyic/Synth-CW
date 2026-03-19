@@ -46,7 +46,7 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 
 ## Task Characterization
 
-This section outlines each task in terms of its theoretical minimum initiation interval and measured maximum execution time, in line with the coursework requirements.
+This section outlines each task in terms of its theoretical minimum initiation interval and Worst Case Execution Time & CPU Utilization.
 
 ### 2.1 Minimum Initiation Intervals
 
