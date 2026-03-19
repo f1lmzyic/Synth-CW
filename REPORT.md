@@ -34,7 +34,7 @@ Rather than using a single main loop, the synthesizer is split into RTOS tasks a
 The video below demonstrates the functionality of our board. It covers the basic operations, how the system behaves when multiple boards are connected, and several advanced features we added.
 
 
-<put the video here>
+<put the video here 
 
 
 ---
