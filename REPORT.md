@@ -200,4 +200,4 @@ The CAN parts use queues and a semaphore to pass data between interrupts and tas
 | **Wave morphing** | Smoothly changes the OSC1 waveform |
 | **Pitch bend** | Adds real-time control during play |
 | **Built-in effects** | Extends the sound beyond the dry synth signal |
-| **Multi-board CAN support** | Lets several boards work as one wider keyboard |
+
