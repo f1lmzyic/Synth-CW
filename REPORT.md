@@ -158,30 +158,29 @@ The CAN parts use queues and a semaphore to pass data between interrupts and tas
 
 | Stage | Function |
 |---|---|
-| **Voice allocation** | Polyphonic note assignment with voice stealing when needed |
-| **Oscillators** | Morphing OSC1, selectable OSC2, and sub oscillator |
-| **Tone shaping** | Noise, ring modulation, sync, and wavefolding |
-| **Envelope** | ADSR envelope and modulation envelope |
-| **Modulation** | LFO, sample-and-hold, glide, and pitch bend |
-| **Filter** | Filter stage with cutoff and resonance control |
-| **Effects** | Delay, chorus, bit reduction, and decimation |
-| **Output** | Final level scaling and audio output |
-
+| **Voice allocation** | Assigns notes across available voices and reuses voices when required |
+| **Oscillator section** | Generates the base sound using OSC1, OSC2, and the sub-oscillator |
+| **Additional sources** | Adds noise and ring modulation for more varied timbre |
+| **Modulation** | Applies ADSR, modulation envelope, LFO, sample-and-hold, glide, and pitch bend |
+| **Filter stage** | Shapes the signal using selectable filter models, filter type, cutoff, and resonance |
+| **Nonlinear shaping** | Applies drive and wavefolding for stronger harmonic colouring |
+| **Effects** | Adds delay, chorus, decimation, and bitcrushing |
+| **Output** | Scales and writes the final audio signal to the output path |
 ---
 
 ## Controls and UI
 
 | Control Element | Purpose |
 |---|---|
-| **Keyboard matrix** | Used to play notes directly on the board |
-| **Rotary knobs** | Used to change the value of the selected parameter |
-| **Joystick** | Used for menu control, page switching, parameter selection, and changing display views |
-| **OLED display** | Shows the performance screen, extra display views, and parameter pages |
-| **Board connection logic** | Detects nearby boards and supports linked-board use |
+| **Keyboard matrix** | Used to enter notes directly on the board |
+| **Rotary knobs** | Adjust the currently selected parameter |
+| **Joystick** | Handles mode changes, page movement, parameter selection, and display view changes |
+| **OLED display** | Shows the performance screen, alternate views, and menu pages |
+| **Board connection logic** | Detects neighbouring boards and supports linked-board operation |
 
 ### Interface Structure
 
-The interface was changed from a single flat layout to a multi-page menu system. A short joystick press switches between performance mode and menu mode. A long press cycles through the display views. Moving the joystick left or right changes page, and moving it up or down selects a parameter on that page. The selected value is then adjusted with the rotary knob.
+The user interface uses a multi-page menu rather than a single flat screen. A short joystick press switches between performance mode and menu mode. A long press cycles through the available display views. Left and right movement changes page, while up and down movement selects a parameter on the current page. The highlighted parameter is then edited using the rotary knob.
 
 ### Display Modes
 
@@ -208,10 +207,11 @@ The interface was changed from a single flat layout to a multi-page menu system.
 
 | Feature | Description |
 |---|---|
-| **Dual primary oscillators** | The synth uses two main VCOs. OSC1 supports continuous waveform morphing, while OSC2 adds standard waveforms with detune, octave shift, and hard sync options |
-| **Sub-oscillator and noise generation** | A dedicated sub-oscillator adds extra low-end weight, and the noise source can be used for percussive or textured sounds |
-| **Ring modulation** | The outputs of OSC1 and OSC2 can be multiplied to create brighter, more metallic, and more inharmonic tones |
-| **Multiple filter models and modes** | The filter section includes three selectable models together with LP, HP, BP, and notch responses, giving a wider range of tonal character |
-| **Drive and wavefolding** | In addition to standard filtering, the signal can be shaped using pre-filter drive and digital wavefolding for a more saturated or aggressive sound |
-| **Envelope and modulation sources** | The engine includes a main ADSR envelope, a separate AD modulation envelope, an assignable LFO, sample-and-hold, and glide |
-| **Built-in digital effects** | The output can be further processed using delay, chorus, decimation, and bitcrushing |
+| **Dual primary oscillators** | OSC1 provides continuous waveform morphing, while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
+| **Sub-oscillator and noise source** | A dedicated sub-oscillator reinforces the low end, and the noise source is available for more percussive or textured sounds |
+| **Ring modulation** | OSC1 and OSC2 can be combined through ring modulation to produce brighter and more inharmonic tones |
+| **Multiple filter models** | The filter section supports three selectable models together with LP, HP, BP, and notch responses |
+| **Drive and wavefolding** | The signal can be shaped further using pre-filter drive and digital wavefolding |
+| **Envelope and modulation control** | The synth includes ADSR, a separate AD modulation envelope, LFO, sample-and-hold, and glide |
+| **Integrated digital effects** | The output stage includes delay, chorus, decimation, and bitcrushing |
+
