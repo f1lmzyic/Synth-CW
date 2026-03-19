@@ -8,6 +8,8 @@
 // #define TEST_DECODE       // Test decodeTask worst-case - 11us
 // #define TEST_CANTX        // Test CAN_TX_Task worst-case - 4 us
 // #define TEST_SAMPLEISR    // Test sampleISR worst-case - 22 us
+// #define TEST_PITCHBEND    // Test pitchBend worst-case
+// #define TEST_JOYSTICK     // Test joystick worst-case
 
 // Number of iterations for timing measurement
 #define TEST_ITERATIONS 32

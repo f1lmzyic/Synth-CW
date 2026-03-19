@@ -349,9 +349,19 @@ void setup() {
 #ifdef TEST_DECODE
     Serial.begin(115200);
     delay(100);
-    // Pre-fill the queue with messages to decode
+    // Set up worst-case: main board (no right neighbor) processing key presses
+    // which requires array scanning and insertion
+    {
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            sysState.hasRight = false;  // Act as main board
+            sysState.hasLeft = false;
+            sysState.pressedKeyCount = 0;
+        }
+    }
+    // Pre-fill the queue with key press messages (worst case: new key insertions)
     for (int i = 0; i < TEST_ITERATIONS; i++) {
-        uint8_t testMsg[8] = {'P', (uint8_t) (i % 12), 0, 0, 0, 0, 0, 0};
+        uint8_t testMsg[8] = {'P', (uint8_t) (i % 12), (uint8_t)(i % 3), 0, 0, 0, 0, 0};
         xQueueSend(msgInQ, testMsg, 0);
     }
     Serial.println("Testing decodeTask worst-case execution time...");
@@ -415,6 +425,51 @@ void setup() {
     uint32_t startTime = micros();
     for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
         sampleISR();
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
+
+#ifdef TEST_PITCHBEND
+    Serial.begin(115200);
+    delay(100);
+    // Set up worst-case: pitch bend enabled with joystick at extreme
+    {
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            sysState.pitchBendEnabled = true;
+        }
+    }
+    Serial.println("Testing pitchBendTask worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        pitchBendTask(nullptr);
+    }
+    uint32_t elapsed = micros() - startTime;
+    Serial.print("Total time for ");
+    Serial.print(TEST_ITERATIONS);
+    Serial.print(" iterations: ");
+    Serial.println(elapsed);
+    Serial.print("Average per iteration: ");
+    Serial.println(elapsed / TEST_ITERATIONS);
+    while (true) {
+    }
+#endif
+
+#ifdef TEST_JOYSTICK
+    Serial.begin(115200);
+    delay(100);
+    Serial.println("Testing scanJoystickTask worst-case execution time...");
+    uint32_t startTime = micros();
+    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+        scanJoystickTask(nullptr);
     }
     uint32_t elapsed = micros() - startTime;
     Serial.print("Total time for ");
