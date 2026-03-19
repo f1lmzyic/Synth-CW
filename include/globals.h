@@ -16,7 +16,8 @@
 
 // Auto-enable these when any test is active
 #if defined(TEST_SCANKEYS) || defined(TEST_DISPLAY) || defined(TEST_DECODE) || \
-defined(TEST_CANTX) || defined(TEST_SAMPLEISR)
+defined(TEST_CANTX) || defined(TEST_SAMPLEISR) || defined(TEST_PITCHBEND) || \
+defined(TEST_JOYSTICK)
   #define DISABLE_THREADS
   #define DISABLE_ISRS
 #endif
@@ -88,6 +89,7 @@ enum MenuPage {
   PAGE_ENV,
   PAGE_MOD,
   PAGE_FX,
+  PAGE_SCOPE,
   PAGE_COUNT
 };
 

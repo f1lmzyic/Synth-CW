@@ -123,7 +123,7 @@ void uiHandleKnobRotation(uint8_t knobIndex, int8_t direction) {
 }
 
 static const char *notes[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-static const char *pageNames[] = {"PERF", "OSC", "OSC2", "FLT", "ENV", "MOD", "FX"};
+static const char *pageNames[] = {"PERF", "OSC", "OSC2", "FLT", "ENV", "MOD", "FX", "SCOPE"};
 static const char *filterTypes[] = {"LP", "HP", "BP", "NOTCH"};
 
 // Draw page header for menu pages
@@ -213,6 +213,85 @@ static void drawPerformancePage(const SystemState &st) {
         sprintf(txt, "M:%03d+%s", st.params.osc1WaveMorph, waveformNames[st.params.osc2Wave]);
     u8g2->setCursor(GX + (GW - u8g2->getStrWidth(txt)) / 2, 31);
     u8g2->print(txt);
+}
+
+// Draw oscilloscope page
+static void drawScopePage(const SystemState &st) {
+    static uint32_t scopePhase = 0;
+    uint32_t scopeInc = 5 + (st.params.lfoRate / 5);
+    scopePhase += scopeInc;
+
+    // Header
+    u8g2->setFont(u8g2_font_ncenB08_tr);
+    u8g2->setCursor(0, 8);
+    u8g2->print("SCOPE");
+
+    // Draw oscilloscope frame and center line
+    u8g2->drawFrame(0, 10, 128, 20);
+    u8g2->drawHLine(0, 20, 128);
+
+    // Draw waveform
+    int lastY = -1;
+    for (uint8_t x = 0; x < 128; x++) {
+        uint8_t phase = ((x * 8) + scopePhase) & 0xFF;
+        int32_t sample1 = 0;
+        if (st.params.osc1WaveMorph < 255) {
+            uint8_t waveBase1 = st.params.osc1WaveMorph >> 6;
+            uint8_t waveBase2 = waveBase1 + 1;
+            if (waveBase2 > 3) waveBase2 = 3;
+            uint8_t morphFract = (st.params.osc1WaveMorph & 0x3F) << 2;
+
+            int32_t s1a = uiGetWaveSample((WaveformType)waveBase1, phase);
+            int32_t s1b = uiGetWaveSample((WaveformType)waveBase2, phase);
+            sample1 = ((s1a * (255 - morphFract)) + (s1b * morphFract)) >> 8;
+        }
+        int32_t mix = st.params.mixOsc2;
+        int32_t sample2 = uiGetWaveSample(st.params.osc2Wave, phase);
+        int32_t vout = ((sample1 * (100 - mix)) + (sample2 * mix)) / 100;
+
+        int y = 20 - ((vout * 8) / 128);
+        if (y < 11) y = 11;
+        if (y > 29) y = 29;
+
+        if (lastY != -1) {
+            u8g2->drawLine(x - 1, lastY, x, y);
+        }
+        lastY = y;
+    }
+
+    // Status line
+    u8g2->setFont(u8g2_font_5x7_tr);
+    char buf[20];
+
+    // Find first pressed key for display
+    int scopeFirstKey = -1;
+    if (st.pressedKeyCount > 0) {
+        scopeFirstKey = st.pressedKeys[0];
+    }
+    if (scopeFirstKey >= 0) {
+        sprintf(buf, "Key: %d", scopeFirstKey);
+    } else {
+        sprintf(buf, "Key: -");
+    }
+    u8g2->setCursor(0, 30);
+    u8g2->print(buf);
+
+    // Show pitch bend value
+    int8_t bend = st.displayPitchBend;
+    bool pbEnabled = st.pitchBendEnabled;
+    if (pbEnabled) {
+        if (bend > 0) {
+            sprintf(buf, "Bend: +%d", bend);
+        } else if (bend < 0) {
+            sprintf(buf, "Bend: %d", bend);
+        } else {
+            sprintf(buf, "Bend: 0");
+        }
+    } else {
+        sprintf(buf, "Bend: OFF");
+    }
+    u8g2->setCursor(60, 30);
+    u8g2->print(buf);
 }
 
 // Draw envelope visualization
@@ -372,6 +451,10 @@ void displayUpdateTask(void *pvParameters) {
                 u8g2->setCursor(72, 16);
                 sprintf(buf, "Sync: %s", st.params.oscSync ? "On" : "Off");
                 u8g2->print(buf);
+                break;
+
+            case PAGE_SCOPE:
+                drawScopePage(st);
                 break;
 
             default:
