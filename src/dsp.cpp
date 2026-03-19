@@ -56,70 +56,80 @@ void dspUpdateParams() {
 }
 
 void sampleISR() {
-    // 1-4. LFO, Noise, S&H, Mod envelope
-  int32_t lfoVal = processLFO(&lfoState, localParams.lfoRate);
-  int32_t noiseVal = generateNoise(&lfoState);
-  processSampleHold(&lfoState, noiseVal);
-  int32_t modEnvCurrent = processModEnvelope(localParams);
+  // Pre-compute modulation values only if needed
+  int32_t lfoVal = 0, noiseVal = 0, modEnvCurrent = 0;
+  const bool needLfo = localParams.lfoDepth > 0;
+  const bool needNoise = localParams.noiseMix > 0;
+  const bool needModEnv = localParams.modEnvAmount > 0;
+  const bool needSH = localParams.shDepth > 0;
 
-  // 5-6. Polyphonic voice processing
+  if (needLfo || needSH) {
+    lfoVal = processLFO(&lfoState, localParams.lfoRate);
+  }
+  if (needNoise || needSH) {
+    noiseVal = generateNoise(&lfoState);
+    if (needSH) processSampleHold(&lfoState, noiseVal);
+  }
+  if (needModEnv) {
+    modEnvCurrent = processModEnvelope(localParams);
+  }
+
+  // Single merged voice loop for active + release processing
   int32_t combinedVoiceOut = 0, totalEnvCurrent = 0;
   uint8_t activeVoiceCount = 0;
-  // Pre-calculate glide shift (avoid division in loop)
-  uint8_t glideShift = 4 + (localParams.glideTime >> 3); // Maps 0-127 to shifts 4-19
+  const uint8_t glideShift = 4 + (localParams.glideTime >> 3);
+  const uint8_t releaseShift = 3 + (localParams.envRelease >> 4);
+  const bool hasOsc2 = localParams.mixOsc2 > 0 || localParams.osc2Wave != WAVEFORM_OFF;
 
   for (int v = 0; v < POLYPHONY; v++) {
     volatile VoiceState &voice = voices[v];
-    if (!voice.active)
-      continue;
-    activeVoiceCount++;
-    // Voice glide (use shift instead of division)
-    if (voice.step != voice.targetStep) {
-      int32_t diff = voice.targetStep - voice.step;
-      int32_t step = diff >> glideShift;
-      if (step == 0)
-        step = (diff > 0) ? 1 : -1;
-      voice.step += step;
-      if ((diff > 0 && voice.step > voice.targetStep) ||
-          (diff < 0 && voice.step < voice.targetStep))
-        voice.step = voice.targetStep;
-    }
-    // Voice pitch with modulations
-    uint32_t osc1Step = voice.step;
-    if (localParams.lfoDepth > 0 && localParams.lfoTarget == 0)
-      osc1Step += (osc1Step * ((lfoVal * localParams.lfoDepth) >> 7)) >> 10;
-    if (localParams.modEnvTarget == 0)
-      osc1Step += (osc1Step * modEnvCurrent) >> 10;
-    if (localParams.shTarget == 0 && localParams.shDepth > 0)
-      osc1Step +=
-          (osc1Step * ((lfoState.shValue * localParams.shDepth) >> 7)) >> 10;
-    // OSC2 tuning
-    uint32_t osc2Step = osc1Step;
-    if (localParams.osc2Detune != 0)
-      osc2Step = (osc2Step * (4096 + localParams.osc2Detune * 4)) >> 12;
-    if (localParams.osc2Octave > 0)
-      osc2Step <<= localParams.osc2Octave;
-    else if (localParams.osc2Octave < 0)
-      osc2Step >>= -localParams.osc2Octave;
-    if (localParams.modEnvTarget == 2)
-      osc2Step += (osc2Step * modEnvCurrent) >> 10;
-    // Advance phase
-    voice.phase += osc1Step;
-    // Mix oscillators, wavefolder, envelope, VCA
-    int32_t voiceMix =
-        mixOscillators(osc1Step, osc2Step, voice.phase, localParams, noiseVal);
-    if (localParams.wavefold > 0)
-      voiceMix = applyWavefolder(voiceMix, localParams.wavefold);
-    uint8_t voiceEnv = processEnvelope(v, localParams);
-    voiceMix = (voiceMix * voiceEnv) >> 8;
-    combinedVoiceOut += voiceMix;
-    totalEnvCurrent += voiceEnv;
-  }
-  // Release envelopes for inactive voices (use shift instead of division)
-  uint8_t releaseShift = 3 + (localParams.envRelease >> 4);
-  for (int v = 0; v < POLYPHONY; v++) {
-    volatile VoiceState &voice = voices[v];
-    if (!voice.active && voice.envValue > 0) {
+
+    if (voice.active) {
+      activeVoiceCount++;
+      // Voice glide
+      if (voice.step != voice.targetStep) {
+        int32_t diff = voice.targetStep - voice.step;
+        int32_t step = diff >> glideShift;
+        if (step == 0) step = (diff > 0) ? 1 : -1;
+        voice.step += step;
+        if ((diff > 0 && voice.step > voice.targetStep) ||
+            (diff < 0 && voice.step < voice.targetStep))
+          voice.step = voice.targetStep;
+      }
+
+      // Voice pitch with modulations (only if enabled)
+      uint32_t osc1Step = voice.step;
+      if (needLfo && localParams.lfoTarget == 0)
+        osc1Step += (osc1Step * ((lfoVal * localParams.lfoDepth) >> 7)) >> 10;
+      if (needModEnv && localParams.modEnvTarget == 0)
+        osc1Step += (osc1Step * modEnvCurrent) >> 10;
+      if (needSH && localParams.shTarget == 0)
+        osc1Step += (osc1Step * ((lfoState.shValue * localParams.shDepth) >> 7)) >> 10;
+
+      // OSC2 tuning (only if OSC2 is used)
+      uint32_t osc2Step = osc1Step;
+      if (hasOsc2) {
+        if (localParams.osc2Detune != 0)
+          osc2Step = (osc2Step * (4096 + localParams.osc2Detune * 4)) >> 12;
+        if (localParams.osc2Octave > 0)
+          osc2Step <<= localParams.osc2Octave;
+        else if (localParams.osc2Octave < 0)
+          osc2Step >>= -localParams.osc2Octave;
+        if (needModEnv && localParams.modEnvTarget == 2)
+          osc2Step += (osc2Step * modEnvCurrent) >> 10;
+      }
+
+      // Advance phase and mix
+      voice.phase += osc1Step;
+      int32_t voiceMix = mixOscillators(osc1Step, osc2Step, voice.phase, localParams, noiseVal);
+      if (localParams.wavefold > 0)
+        voiceMix = applyWavefolder(voiceMix, localParams.wavefold);
+      uint8_t voiceEnv = processEnvelope(v, localParams);
+      voiceMix = (voiceMix * voiceEnv) >> 8;
+      combinedVoiceOut += voiceMix;
+      totalEnvCurrent += voiceEnv;
+    } else if (voice.envValue > 0) {
+      // Release envelope for inactive voice
       int32_t step = voice.envValue >> releaseShift;
       if (step < 1) step = 1;
       voice.envValue -= step;
@@ -129,63 +139,74 @@ void sampleISR() {
       }
     }
   }
-  // Scale output using shift approximations to avoid division
-  // For small voice counts, use pre-calculated shifts
+
+  // Early exit if no voices active
   int32_t vout = 0;
-  if (activeVoiceCount > 0) {
-    // Approximate division by voice count using shifts
-    // 1: >>0, 2: >>1, 3: multiply by 85 >>8, 4: >>2
-    switch (activeVoiceCount) {
-      case 1: totalEnvCurrent = totalEnvCurrent; vout = combinedVoiceOut >> 1; break;
-      case 2: totalEnvCurrent >>= 1; vout = (combinedVoiceOut * 85) >> 8; break;
-      case 3: totalEnvCurrent = (totalEnvCurrent * 85) >> 8; vout = (combinedVoiceOut * 73) >> 8; break;
-      case 4: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
-      default: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
+  if (activeVoiceCount == 0) {
+    // Still need to process effects tails
+    if (localParams.delayMix > 0)
+      vout = processDelay(&effectsState, 0, localParams.delayTime,
+                          localParams.delayFeedback, localParams.delayMix);
+    goto output;
+  }
+
+  // Scale output (optimized switch)
+  switch (activeVoiceCount) {
+    case 1: vout = combinedVoiceOut >> 1; break;
+    case 2: totalEnvCurrent >>= 1; vout = (combinedVoiceOut * 85) >> 8; break;
+    case 3: totalEnvCurrent = (totalEnvCurrent * 85) >> 8; vout = (combinedVoiceOut * 73) >> 8; break;
+    default: totalEnvCurrent >>= 2; vout = combinedVoiceOut >> 2; break;
+  }
+
+  // Filter section
+  {
+    int32_t cutoff = smoothCutoff * 2;
+    if (needLfo && localParams.lfoTarget == 1)
+      cutoff += (lfoVal * localParams.lfoDepth) >> 6;
+    cutoff += (totalEnvCurrent * localParams.filterEnvDepth) >> 6;
+    if (needModEnv && localParams.modEnvTarget == 1)
+      cutoff += modEnvCurrent >> 1;
+    if (needSH && localParams.shTarget == 1)
+      cutoff += (lfoState.shValue * localParams.shDepth) >> 6;
+    if (cutoff < 1) cutoff = 1;
+    else if (cutoff > 255) cutoff = 255;
+
+    if (localParams.filterDrive > 0)
+      vout = applyFilterDrive(vout, localParams.filterDrive);
+
+    switch (localParams.filterModel) {
+      case 1:
+        vout = processMoogFilter(filterState, vout, cutoff, localParams.filterRes, localParams.filterType);
+        break;
+      case 2:
+        vout = processMS20Filter(filterState, vout, cutoff, localParams.filterRes, localParams.filterType);
+        break;
+      default:
+        vout = processSVF(filterState, vout, cutoff, localParams.filterRes, localParams.filterType);
     }
   }
 
-  // 7-9. Filter section
-  int32_t cutoff = smoothCutoff * 2;
-  if (localParams.lfoTarget == 1 && localParams.lfoDepth > 0)
-    cutoff += (lfoVal * localParams.lfoDepth) >> 6;
-  cutoff += (totalEnvCurrent * localParams.filterEnvDepth) >> 6;
-  if (localParams.modEnvTarget == 1)
-    cutoff += modEnvCurrent >> 1;
-  if (localParams.shTarget == 1 && localParams.shDepth > 0)
-    cutoff += (lfoState.shValue * localParams.shDepth) >> 6;
-  cutoff = cutoff < 1 ? 1 : (cutoff > 255 ? 255 : cutoff);
-  if (localParams.filterDrive > 0)
-    vout = applyFilterDrive(vout, localParams.filterDrive);
-  switch (localParams.filterModel) {
-  case 1:
-    vout = processMoogFilter(filterState, vout, cutoff, localParams.filterRes,
-                             localParams.filterType);
-    break;
-  case 2:
-    vout = processMS20Filter(filterState, vout, cutoff, localParams.filterRes,
-                             localParams.filterType);
-    break;
-  default:
-    vout = processSVF(filterState, vout, cutoff, localParams.filterRes,
-                      localParams.filterType);
-  }
-  // 10-13. Effects chain
-  vout = processDelay(&effectsState, vout, localParams.delayTime,
-                      localParams.delayFeedback, localParams.delayMix);
-  vout = processChorus(&effectsState, vout, localParams.chorusRate,
-                       localParams.chorusDepth, localParams.chorusMix);
-  vout = processBitcrusher(vout, localParams.bitcrushDepth);
-  vout = processDecimator(&effectsState, vout, localParams.decimatorRate);
-  // 14-17. Master output
+  // Effects chain (skip if disabled)
+  if (localParams.delayTime > 0 && localParams.delayMix > 0)
+    vout = processDelay(&effectsState, vout, localParams.delayTime,
+                        localParams.delayFeedback, localParams.delayMix);
+  if (localParams.chorusDepth > 0 && localParams.chorusMix > 0)
+    vout = processChorus(&effectsState, vout, localParams.chorusRate,
+                         localParams.chorusDepth, localParams.chorusMix);
+  if (localParams.bitcrushDepth > 0)
+    vout = processBitcrusher(vout, localParams.bitcrushDepth);
+  if (localParams.decimatorRate > 0)
+    vout = processDecimator(&effectsState, vout, localParams.decimatorRate);
+
+output:
+  // Master output with DC blocking
   vout = (vout * smoothVol) >> 3;
   static int32_t dcPrevIn = 0, dcPrevOut = 0;
   int32_t dcIn = vout;
   vout = dcIn - dcPrevIn + ((dcPrevOut * 1020) >> 10);
   dcPrevIn = dcIn;
   dcPrevOut = vout;
-  if (vout > 127)
-    vout = 127;
-  if (vout < -128)
-    vout = -128;
+  if (vout > 127) vout = 127;
+  else if (vout < -128) vout = -128;
   analogWrite(OUTR_PIN, vout + 128);
 }
