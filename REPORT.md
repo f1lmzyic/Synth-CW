@@ -65,3 +65,48 @@ Total CPU utilisation = 68.23%
 <p align="center">
   <img src="cpu_utilisation.png" width="700">
 </p>
+
+
+## Audio Pipeline
+
+| Stage | Function |
+|---|---|
+| **Voice allocation** | Polyphonic note assignment with voice stealing when needed |
+| **Oscillators** | Morphing OSC1, selectable OSC2, and sub oscillator |
+| **Tone shaping** | Noise, ring modulation, sync, and wavefolding |
+| **Envelope** | ADSR envelope and modulation envelope |
+| **Modulation** | LFO, sample-and-hold, glide, and pitch bend |
+| **Filter** | Filter stage with cutoff and resonance control |
+| **Effects** | Delay, chorus, bit reduction, and decimation |
+| **Output** | Final level scaling and audio output |
+
+## Controls and UI
+
+| Control Element | Purpose |
+|---|---|
+| **Keyboard matrix** | Local note input |
+| **Rotary controls** | Parameter adjustment on each page |
+| **Joystick** | Page navigation, or pitch bend when enabled |
+| **OLED display** | Shows performance and parameter pages |
+| **Board connection logic** | Detects neighbouring boards for multi-board use |
+
+### Display Pages
+
+- Performance page
+- Oscillator page
+- Oscillator extension page
+- Filter page
+- Envelope page
+- Modulation page
+- Effects page
+
+## Advanced Features
+
+| Feature | Description |
+|---|---|
+| **Polyphony** | Plays multiple notes at the same time |
+| **Voice stealing** | Reuses voices when all are busy |
+| **Wave morphing** | Smoothly changes the OSC1 waveform |
+| **Pitch bend** | Adds real-time control during play |
+| **Built-in effects** | Extends the sound beyond the dry synth signal |
+| **Multi-board CAN support** | Lets several boards work as one wider keyboard |
