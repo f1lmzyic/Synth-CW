@@ -71,26 +71,26 @@ This section gives the minimum initiation interval for each task and ISR, togeth
 
 ### 2.2 Worst Case Execution Time / CPU Utilization
 
-The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval. *(Note: CAN ISR times include the measured base loop overhead plus the ~4us and ~3us actual hardware ISR function overhead).*
+The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval. *(Note: The `sampleISR` timing includes all processing from LFO through to PWM output. CAN ISRs are short and event-driven, with negligible CPU impact.)*
 
 | Task / ISR          | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
 |---------------------|----------:|----------------------------:|--------------------:|
-| `sampleISR`         |        40 |                       45 us |               88.89 |
-| `scanKeysTask`      |       159 |                       20 ms |                0.80 |
-| `displayUpdateTask` |     16149 |                      100 ms |               16.15 |
+| `sampleISR`         |        33 |                       45 us |               73.33 |
+| `scanKeysTask`      |       156 |                       20 ms |                0.78 |
+| `displayUpdateTask` |     16416 |                      100 ms |               16.42 |
 | `decodeTask`        |        11 |                    25.2 ms |                0.04 |
 | `CAN_TX_Task`       |         4 |                       60 ms |                0.01 |
-| `pitchBendTask`     |        13 |                       50 ms |                0.03 |
+| `pitchBendTask`     |        11 |                       50 ms |                0.02 |
 
-**Total CPU utilisation ≈ 105.92%**
+**Total CPU utilisation ≈ 90.60%**
 
-*Note: The total exceeds 100% because `sampleISR` dominates. In practice, the ISR completes within its deadline (40 us < 45 us), leaving ~5 us slack per sample period. The background tasks are scheduled during ISR idle time and complete well within their longer periods.*
+*Note: The audio ISR (`sampleISR`) accounts for ~73% of CPU time. The ISR completes within its deadline (33 us < 45 us), leaving ~12 us slack per sample period. The background tasks consume ~17% combined and complete well within their longer periods.*
 
 ---
 
 ## CPU Utilisation
 
-CPU utilisation percentages are shown in the Task Characterization table above. The audio ISR (`sampleISR`) accounts for ~89% of CPU time, with background tasks consuming ~17% combined. The system remains schedulable because the ISR always completes before the next sample deadline, and the remaining tasks have much longer periods allowing them to execute in the gaps between ISR invocations.
+CPU utilisation percentages are shown in the Task Characterization table above. The audio ISR (`sampleISR`) accounts for ~73% of CPU time, with background tasks consuming ~17% combined. The total utilization of ~91% leaves sufficient headroom for the system to remain schedulable. The ISR always completes before the next sample deadline (33 us < 45 us), and the remaining tasks have much longer periods allowing them to execute in the gaps between ISR invocations.
 
 ---
 
@@ -102,12 +102,12 @@ Under rate monotonic scheduling (RMS), priorities are assigned inversely to peri
 
 | Priority | Task / ISR | Period (T) | WCET (C) |
 |:--------:|------------|------------|----------|
-| Highest  | `sampleISR` | 45 us | 40 us |
-| 1        | `scanKeysTask` | 20 ms | 159 us |
-| 2        | `pitchBendTask` | 50 ms | 13 us |
+| Highest  | `sampleISR` | 45 us | 33 us |
+| 1        | `scanKeysTask` | 20 ms | 156 us |
+| 2        | `pitchBendTask` | 50 ms | 11 us |
 | 3        | `decodeTask` | 25.2 ms (event) | 11 us |
 | 4        | `CAN_TX_Task` | 60 ms (event) | 4 us |
-| Lowest   | `displayUpdateTask` | 100 ms | 16149 us |
+| Lowest   | `displayUpdateTask` | 100 ms | 16416 us |
 
 ### Response Time Analysis
 
@@ -115,31 +115,26 @@ For each task, the worst-case response time R must satisfy R ≤ T (deadline = p
 
 **sampleISR (Timer Interrupt):**
 - Runs at hardware interrupt level, pre-empts all tasks
-- R = C = 40 us < T = 45 us ✓
+- R = C = 33 us < T = 45 us ✓
 
 **scanKeysTask:**
-- Interference from sampleISR during 20 ms: ⌈20000/45⌉ × 40 = 444 × 40 = 17,760 us
-- R = 159 + 17,760 = 17,919 us < T = 20,000 us ✓
+- Interference from sampleISR during 20 ms: ⌈20000/45⌉ × 33 = 445 × 33 = 14,685 us
+- R = 156 + 14,685 = 14,841 us < T = 20,000 us ✓
 
 **pitchBendTask:**
-- Interference from sampleISR: ⌈50000/45⌉ × 40 = 1112 × 40 = 44,480 us
-- Interference from scanKeysTask: ⌈50000/20000⌉ × 159 = 3 × 159 = 477 us
-- R = 13 + 44,480 + 477 = 44,970 us < T = 50,000 us ✓
+- Interference from sampleISR: ⌈50000/45⌉ × 33 = 1112 × 33 = 36,696 us
+- Interference from scanKeysTask: ⌈50000/20000⌉ × 156 = 3 × 156 = 468 us
+- R = 11 + 36,696 + 468 = 37,175 us < T = 50,000 us ✓
 
 **displayUpdateTask:**
-- Interference from sampleISR: ⌈100000/45⌉ × 40 = 2223 × 40 = 88,920 us
-- Interference from scanKeysTask: ⌈100000/20000⌉ × 159 = 5 × 159 = 795 us
-- Interference from pitchBendTask: ⌈100000/50000⌉ × 13 = 2 × 13 = 26 us
-- R = 16,149 + 88,920 + 795 + 26 = 105,890 us > T = 100,000 us ✗
-
-**Analysis:** The theoretical worst-case for `displayUpdateTask` slightly exceeds its deadline. However, this analysis is overly pessimistic because:
-1. The sampleISR interference calculation assumes continuous preemption, but in practice the ISR only runs when triggered
-2. The display task uses `vTaskDelayUntil()` which tolerates occasional timing jitter
-3. Measured real-world performance shows no deadline misses
+- Interference from sampleISR: ⌈100000/45⌉ × 33 = 2223 × 33 = 73,359 us
+- Interference from scanKeysTask: ⌈100000/20000⌉ × 156 = 5 × 156 = 780 us
+- Interference from pitchBendTask: ⌈100000/50000⌉ × 11 = 2 × 11 = 22 us
+- R = 16,416 + 73,359 + 780 + 22 = 90,577 us < T = 100,000 us ✓
 
 ### Conclusion
 
-All hard real-time deadlines (audio at 22 kHz) are met. The display task, which has soft real-time requirements, may occasionally experience minor jitter but this does not affect audio quality or system stability.
+All deadlines are met under worst-case conditions. The audio ISR completes well within its 45 μs deadline (33 μs). Background tasks also complete within their periods, even when accounting for interference from higher-priority work. The display task now meets its deadline with ~9.4 ms of slack time.
 
 ---
 
@@ -229,10 +224,10 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
 | **Voice allocation** | 4-voice polyphonic allocator with round-robin assignment, per-voice phase/ADSR state |
 | **Oscillator section** | Generates the base sound using OSC1 (waveform morphing), OSC2 (with detune/hard-sync), and the sub-oscillator |
 | **Additional sources** | Adds noise (32-bit LFSR) and ring modulation for more varied timbre |
-| **Modulation** | Applies ADSR envelope (volume), AD envelope (modulation), LFO (pitch/filter targets), glide, and pitch bend |
-| **Filter stage** | Three models: Standard SVF (LP/HP/BP/Notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
-| **Nonlinear shaping** | Applies drive and wavefolding for stronger harmonic colouring |
-| **Effects** | Adds delay (8192-sample), chorus (2048-sample modulated delay), bit-crusher, and decimator |
+| **Modulation** | Applies ADSR envelope (volume), LFO (filter targets), glide, and pitch bend |
+| **Filter stage** | State Variable Filter (SVF) with selectable LP/HP/BP/Notch responses |
+| **Nonlinear shaping** | Applies wavefolding for harmonic coloration |
+| **Effects** | Adds delay (8192-sample with feedback and mix) |
 | **Output** | Scales and writes the final audio signal (22 kHz, 8-bit PWM) to the output path |
 
 ---
@@ -281,13 +276,13 @@ This section highlights the key differentiating features that go beyond the basi
 | **Sub-Oscillator** | Square wave one octave below for reinforced bass |
 | **Noise Generator** | 32-bit LFSR noise for percussion and texture |
 | **Ring Modulation** | Bright, inharmonic tones by multiplying OSC1 × OSC2 |
-| **Filter Models** | Three selectable filters: SVF (LP/HP/BP/Notch), Moog Ladder (4-pole), MS-20 Sallen-Key |
-| **Drive & Wavefolding** | Pre-filter distortion and threshold-based wavefolding for harmonic coloration |
+| **State Variable Filter** | SVF with selectable LP/HP/BP/Notch responses |
+| **Wavefolding** | Threshold-based wavefolding for harmonic coloration |
 | **ADSR Envelope** | Volume envelope with attack, decay, sustain, release stages |
-| **LFO Modulation** | Low-frequency oscillator targeting pitch and filter cutoff |
+| **LFO Modulation** | Low-frequency oscillator targeting filter cutoff |
 | **Glide/Portamento** | Smooth pitch transitions between notes |
 | **Pitch Bend** | Joystick-controlled pitch modulation |
-| **Digital Effects** | 8192-sample delay, 2048-sample chorus, bit-crusher, decimator |
+| **Delay Effect** | 8192-sample delay with feedback and mix control |
 | **Multi-Board CAN** | Stack up to 3 keyboards; sender/receiver modes with automatic voice sharing |
 | **Real-Time Control** | Perceptible zero-latency response via 22 kHz audio ISR |
 | **OLED Interface** | 128×32 display with waveform scope, envelope visualization, and 7 parameter pages |

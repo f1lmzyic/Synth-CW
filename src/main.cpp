@@ -507,25 +507,6 @@ void setup() {
     while (true) {
     }
 #endif
-
-#ifdef TEST_JOYSTICK
-    Serial.begin(115200);
-    delay(100);
-    Serial.println("Testing scanJoystickTask worst-case execution time...");
-    uint32_t startTime = micros();
-    for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
-        scanJoystickTask(nullptr);
-    }
-    uint32_t elapsed = micros() - startTime;
-    Serial.print("Total time for ");
-    Serial.print(TEST_ITERATIONS);
-    Serial.print(" iterations: ");
-    Serial.println(elapsed);
-    Serial.print("Average per iteration: ");
-    Serial.println(elapsed / TEST_ITERATIONS);
-    while (true) {
-    }
-#endif
 }
 
 void loop() {

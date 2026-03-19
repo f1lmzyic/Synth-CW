@@ -139,10 +139,5 @@ void pitchBendTask(void *pvParameters);
 #else
 [[noreturn]] void pitchBendTask(void *pvParameters);
 #endif
-#ifdef TEST_JOYSTICK
-void scanJoystickTask(void *pvParameters);
-#else
-[[noreturn]] void scanJoystickTask(void *pvParameters);
-#endif
 
 uint32_t getKeyMask();

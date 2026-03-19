@@ -3,28 +3,14 @@
 #include "voice_engine.h"
 #include <Arduino.h>
 
-// ============================================================================
-// Modulation envelope state (owned by envelopes module)
-// ============================================================================
-EnvState modEnvState = ENV_IDLE;
-int32_t modEnvValue = 0;
-
 void envelopeInit() {
   // Voice envelopes initialized in voice_engine
-  modEnvState = ENV_IDLE;
-  modEnvValue = 0;
 }
 
 void triggerEnvelopeRelease(uint8_t voiceIndex) {
   if (voiceIndex < POLYPHONY) {
     voices[voiceIndex].envState = ENV_RELEASE;
   }
-}
-
-void triggerModEnvelope() {
-  // Trigger mod envelope to start from attack
-  modEnvState = ENV_ATTACK;
-  modEnvValue = 1;
 }
 
 uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params) {
@@ -101,39 +87,4 @@ uint8_t processEnvelope(uint8_t voiceIndex, const SynthParams &params) {
     voice.envValue = 0;
   }
   return voice.envValue >> 8;
-}
-
-int32_t processModEnvelope(const SynthParams &params) {
-  int32_t step;
-  switch (modEnvState) {
-  case ENV_ATTACK:
-    // Use shift instead of division: shift = 1 + (param >> 4) gives range 1-8
-    step = (255 << 8) >> (1 + (params.modEnvAttack >> 4));
-    modEnvValue += step;
-    if (modEnvValue >= (255 << 8)) {
-      modEnvValue = 255 << 8;
-      modEnvState = ENV_DECAY;
-    }
-    break;
-  case ENV_DECAY:
-    step = (255 << 8) >> (1 + (params.modEnvDecay >> 4));
-    modEnvValue -= step;
-    if (modEnvValue <= 0) {
-      modEnvValue = 0;
-      modEnvState = ENV_IDLE;
-    }
-    break;
-  case ENV_RELEASE:
-    step = (255 << 8) >> (1 + (params.modEnvDecay >> 5));
-    modEnvValue -= step;
-    if (modEnvValue <= 0) {
-      modEnvValue = 0;
-      modEnvState = ENV_IDLE;
-    }
-    break;
-  default:
-    modEnvValue = 0;
-  }
-  // Use >>6 instead of /64
-  return ((modEnvValue >> 8) * params.modEnvAmount) >> 6;
 }

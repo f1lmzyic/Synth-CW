@@ -9,7 +9,6 @@
 TaskHandle_t scanKeysHandle = NULL;
 TaskHandle_t scanKnobsHandle = NULL;
 TaskHandle_t pitchBendHandle = NULL;
-TaskHandle_t scanJoystickHandle = NULL;
 
 static std::atomic<uint32_t> atomicKeyMask{0};
 
@@ -428,6 +427,9 @@ void pitchBendTask(void *pvParameters) {
   TickType_t lastWakeTime = xTaskGetTickCount();
 
   while (true) {
+    // Read joystick Y for pitch bend
+    int16_t joyY = analogRead(JOYY_PIN);
+
     // Read pitch bend enabled state
     bool pbEnabled = false;
     {
@@ -437,7 +439,8 @@ void pitchBendTask(void *pvParameters) {
       }
     }
 
-    int16_t joyY = cachedJoyY;
+    // Update navigation (X-axis for page changes)
+    navUpdate(joyY, pbEnabled);
 
     uint8_t newPitchBend = PITCH_BEND_CENTER;
     int8_t bendSemitones = 0;
@@ -481,66 +484,6 @@ void pitchBendTask(void *pvParameters) {
     }
 
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(50));
-  }
-}
-#endif
-
-// ============================================================================
-// Scan Joystick Task - 100ms interval
-// Reads joystick analog values (X/Y) for navigation
-// Priority: 1 (same as pitchBendTask, lower than scanKeysTask)
-// ============================================================================
-#ifdef TEST_JOYSTICK
-void scanJoystickTask(void *pvParameters) {
-  // Worst case: ADC read + two mutex acquisitions + navUpdate call
-  int joyY = analogRead(JOYY_PIN);
-
-  // Update sysState with mutex protection
-  {
-    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-    if (lock) {
-      sysState.joystickY = joyY;
-    }
-  }
-
-  // Call navigation update with current pitch bend state
-  bool pbEnabled = false;
-  {
-    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-    if (lock) {
-      pbEnabled = sysState.pitchBendEnabled;
-    }
-  }
-  navUpdate(joyY, pbEnabled);
-  // Test mode: single iteration, no delay
-}
-#else
-[[noreturn]] void scanJoystickTask(void *pvParameters) {
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(100);  // 100ms = 10Hz
-
-  while (true) {
-    int joyY = analogRead(JOYY_PIN);
-
-    // Update sysState with mutex protection
-    {
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
-        sysState.joystickY = joyY;
-      }
-    }
-
-    // Call navigation update with current pitch bend state
-    bool pbEnabled = false;
-    {
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
-        pbEnabled = sysState.pitchBendEnabled;
-      }
-    }
-    navUpdate(joyY, pbEnabled);
-
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 #endif

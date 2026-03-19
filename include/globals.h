@@ -3,21 +3,19 @@
 #include <STM32FreeRTOS.h>
 #include <bitset>
 
-// #define TEST_SCANKEYS     // Test scanKeysTask worst-case (12 key messages) - 159 us
-// #define TEST_DISPLAY      // Test displayUpdateTask worst-case - 16149 us
+// #define TEST_SCANKEYS     // Test scanKeysTask worst-case (12 key messages) - 156 us
+// #define TEST_DISPLAY      // Test displayUpdateTask worst-case - 16416 us
 // #define TEST_DECODE       // Test decodeTask worst-case - 11us
 // #define TEST_CANTX        // Test CAN_TX_Task worst-case - 4 us
-// #define TEST_SAMPLEISR    // Test sampleISR worst-case - 40 us
-// #define TEST_PITCHBEND    // Test pitchBend worst-case - 13 us
-// #define TEST_JOYSTICK     // Test joystick worst-case - 171 us
+// #define TEST_SAMPLEISR    // Test sampleISR worst-case - 33 us
+// #define TEST_PITCHBEND    // Test pitchBend worst-case - 11 us
 
 // Number of iterations for timing measurement
 #define TEST_ITERATIONS 32
 
 // Auto-enable these when any test is active
 #if defined(TEST_SCANKEYS) || defined(TEST_DISPLAY) || defined(TEST_DECODE) || \
-defined(TEST_CANTX) || defined(TEST_SAMPLEISR) || defined(TEST_PITCHBEND) || \
-defined(TEST_JOYSTICK)
+defined(TEST_CANTX) || defined(TEST_SAMPLEISR) || defined(TEST_PITCHBEND)
   #define DISABLE_THREADS
   #define DISABLE_ISRS
 #endif
@@ -107,16 +105,13 @@ struct SynthParams {
   uint8_t subOscMix;  // 0 to 100
   uint8_t noiseMix;   // 0 to 100
   uint8_t ringModMix; // 0 to 100
+  uint8_t wavefold;      // 0-127
 
   // Filter
   uint8_t filterCutoff;  // 0 to 127
   uint8_t filterRes;     // 0 to 127
   int8_t filterEnvDepth; // -64 to +64
   uint8_t filterType;    // 0=LP, 1=HP, 2=BP, 3=Notch
-  uint8_t filterModel;   // 0=Standard SVF, 1=Moog Ladder (Drive), 2=MS-20
-                         // (Aggressive)
-  uint8_t filterDrive;   // 0-127
-  uint8_t wavefold;      // 0-127
 
   // Sync
   bool oscSync;
@@ -127,29 +122,15 @@ struct SynthParams {
   uint8_t envSustain;
   uint8_t envRelease;
 
-  // Mod Envelope
-  uint8_t modEnvAttack;
-  uint8_t modEnvDecay;
-  int8_t modEnvAmount;  // -64 to +64
-  uint8_t modEnvTarget; // 0=Pitch, 1=Filter, 2=Osc2Pitch
-
-  // LFO & S&H
+  // LFO
   uint8_t lfoRate;
   uint8_t lfoDepth;
-  uint8_t lfoTarget; // 0=Pitch, 1=Filter, 2=PWM
-  uint8_t shDepth;   // 0-127
-  uint8_t shTarget;  // 0=Pitch, 1=Filter
 
   // Misc
   uint8_t glideTime;
   uint8_t delayTime;
   uint8_t delayFeedback;
   uint8_t delayMix;
-  uint8_t chorusRate;
-  uint8_t chorusDepth;
-  uint8_t chorusMix;
-  uint8_t bitcrushDepth; // 0-7
-  uint8_t decimatorRate; // 0-127
   uint8_t masterVol;
 };
 
@@ -194,10 +175,6 @@ struct SystemState {
   // Pitch bend for UI display (read-only, set by hw.cpp)
   int8_t displayPitchBend;
   bool pitchBendEnabled;
-
-  // Joystick analog state (set by scanJoystickTask)
-  int16_t joystickX;
-  int16_t joystickY;
 };
 
 // Extern declaration for the shared state

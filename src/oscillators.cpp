@@ -22,12 +22,18 @@ int32_t mixOscillators(uint32_t osc1Step, uint32_t osc2Step, uint32_t phase,
 
   // OSC1 with wave morphing between adjacent waveforms
   uint8_t waveIndex1 = params.osc1WaveMorph >> 6; // 0-3 (which waveform)
-  uint8_t waveIndex2 = (waveIndex1 < 3) ? waveIndex1 + 1 : 3;
   uint8_t morphFrac = (params.osc1WaveMorph & 0x3F) << 2; // 0-255
 
-  int32_t osc1a = getWaveSample((WaveformType)waveIndex1, newPhase);
-  int32_t osc1b = getWaveSample((WaveformType)waveIndex2, newPhase);
-  int32_t osc1Out = ((osc1a * (255 - morphFrac)) + (osc1b * morphFrac)) >> 8;
+  int32_t osc1Out;
+  if (morphFrac == 0) {
+    // Pure waveform — skip second sample and two multiplies
+    osc1Out = getWaveSample((WaveformType)waveIndex1, newPhase);
+  } else {
+    uint8_t waveIndex2 = (waveIndex1 < 3) ? waveIndex1 + 1 : 3;
+    int32_t osc1a = getWaveSample((WaveformType)waveIndex1, newPhase);
+    int32_t osc1b = getWaveSample((WaveformType)waveIndex2, newPhase);
+    osc1Out = ((osc1a * (255 - morphFrac)) + (osc1b * morphFrac)) >> 8;
+  }
 
   // OSC2
   int32_t osc2Out = getWaveSample(params.osc2Wave, osc2Phase);

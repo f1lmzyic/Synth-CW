@@ -178,9 +178,6 @@ void voiceEngineUpdateParams(void) {
     voices[freeVoice].envValue = 0;
     voices[freeVoice].envState = VOICE_ENV_ATTACK;
     voices[freeVoice].active = true;
-
-    // Trigger modulation envelope when note is played
-    triggerModEnvelope();
   }
 
   // Step 3: Reapply current pitch bend to all active voices so that moving

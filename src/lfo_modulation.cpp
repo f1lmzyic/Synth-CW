@@ -2,16 +2,9 @@
 #include "dsp.h"
 #include "sine_lut.h"
 
-// ============================================================================
-// LFO & Modulation Module Implementation
-// Pure functions for LFO, noise, and sample & hold generation
-// ============================================================================
-
+// Initialize LFO state
 void lfoInit(LfoState *state) {
   state->lfoPhase = 0;
-  state->chorusLfoPhase = 0;
-  state->shValue = 0;
-  state->lastLfoPhase = 0;
   state->lfsrState = 0xACE1u; // LFSR seed
 }
 
@@ -47,14 +40,4 @@ int32_t generateNoise(LfoState *state) {
   int32_t noiseVal = (int32_t)(state->lfsrState >> 24) - 128;
 
   return noiseVal;
-}
-
-int32_t processSampleHold(LfoState *state, int32_t noiseVal) {
-  // Sample noise at LFO cycle boundary (when phase wraps)
-  if (state->lfoPhase < state->lastLfoPhase) {
-    state->shValue = noiseVal;
-  }
-  state->lastLfoPhase = state->lfoPhase;
-
-  return state->shValue;
 }
