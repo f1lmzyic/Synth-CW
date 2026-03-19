@@ -173,21 +173,29 @@ The CAN parts use queues and a semaphore to pass data between interrupts and tas
 
 | Control Element | Purpose |
 |---|---|
-| **Keyboard matrix** | Local note input |
-| **Rotary controls** | Parameter adjustment on each page |
-| **Joystick** | Page navigation, or pitch bend when enabled |
-| **OLED display** | Shows performance and parameter pages |
-| **Board connection logic** | Detects neighbouring boards for multi-board use |
+| **Keyboard matrix** | Used for local note input |
+| **Rotary knobs** | Change the value of the selected setting |
+| **Joystick** | Used to move through pages, highlight parameters, and switch modes |
+| **OLED display** | Displays the main performance screen and menu pages |
+| **Board connection logic** | Detects and supports linked-board operation |
 
-### Display Pages
+### Interface Structure
+
+Compared with the earlier flat layout, the interface now uses a multi-page menu system. The joystick is used for navigation: a short press changes between performance and menu modes, a long press cycles through views, left/right changes page, and up/down moves the cursor between parameters. Once a parameter is selected, its value is changed using the rotary control.
+
+### Display and Parameter Pages
 
 - Performance page
 - Oscillator page
 - Oscillator extension page
 - Filter page
+- Filter model page
 - Envelope page
 - Modulation page
+- Modulation envelope page
+- Sample-and-hold page
 - Effects page
+- Chorus / bitcrusher page
 
 ---
 
