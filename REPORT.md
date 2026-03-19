@@ -62,4 +62,6 @@ This section outlines each task in terms of its theoretical minimum initiation i
 Total CPU utilisation = 68.23%
 ## CPU Utilisation by Task
 
-![CPU utilisation](images/cpu_utilisation.png)
+<p align="center">
+  <img src="cpu_utilisation.png" width="700">
+</p>
