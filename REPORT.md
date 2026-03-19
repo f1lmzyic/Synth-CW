@@ -203,10 +203,10 @@ Compared with the earlier flat layout, the interface now uses a multi-page menu 
 
 | Feature | Description |
 |---|---|
-| **Two-oscillator synthesis engine** | Combines a morphing main oscillator with a second oscillator for detune, octave offset, and sync effects |
-| **Extended tone sources** | Includes sub-oscillator, noise generation, and ring modulation for a wider sound range |
-| **Configurable filter section** | Supports multiple filter models, selectable filter modes, and controllable resonance/cutoff shaping |
-| **Nonlinear sound shaping** | Adds drive and wavefolding to produce stronger and less clean timbres when needed |
-| **Modulation system** | Uses envelope, modulation envelope, LFO, sample-and-hold, and glide to animate pitch and filter behaviour |
-| **Built-in effects processing** | Provides delay, chorus, decimation, and bitcrushing inside the synth engine |
-| **Linked-board support** | Allows the system to operate with neighbouring boards in a larger setup |
+| **Dual primary oscillators** | The synth uses two main VCOs. OSC1 supports continuous waveform morphing, while OSC2 adds standard waveforms with detune, octave shift, and hard sync options |
+| **Sub-oscillator and noise generation** | A dedicated sub-oscillator adds extra low-end weight, and the noise source can be used for percussive or textured sounds |
+| **Ring modulation** | The outputs of OSC1 and OSC2 can be multiplied to create brighter, more metallic, and more inharmonic tones |
+| **Multiple filter models and modes** | The filter section includes three selectable models together with LP, HP, BP, and notch responses, giving a wider range of tonal character |
+| **Drive and wavefolding** | In addition to standard filtering, the signal can be shaped using pre-filter drive and digital wavefolding for a more saturated or aggressive sound |
+| **Envelope and modulation sources** | The engine includes a main ADSR envelope, a separate AD modulation envelope, an assignable LFO, sample-and-hold, and glide |
+| **Built-in digital effects** | The output can be further processed using delay, chorus, decimation, and bitcrushing |
