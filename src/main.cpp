@@ -311,6 +311,17 @@ void setup() {
 #ifdef TEST_SCANKEYS
     Serial.begin(115200);
     delay(100);
+    // Set up worst-case: main board (no right neighbor) so dspUpdateParams runs
+    {
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            sysState.hasRight = false;  // Act as main board for dspUpdateParams
+            sysState.pressedKeyCount = POLYPHONY;
+            for (int i = 0; i < POLYPHONY; i++) {
+                sysState.pressedKeys[i] = i;
+            }
+        }
+    }
     Serial.println("Testing scanKeysTask worst-case execution time...");
     uint32_t startTime = micros();
     for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
@@ -330,6 +341,18 @@ void setup() {
 #ifdef TEST_DISPLAY
     Serial.begin(115200);
     delay(100);
+    // Set up worst-case: PAGE_SCOPE has 128-iteration waveform drawing loop
+    {
+        MutexGuard lock(sysState.mutex);
+        if (lock) {
+            sysState.activePage = PAGE_SCOPE;
+            sysState.pitchBendEnabled = true;
+            sysState.pressedKeyCount = MAX_PRESSED_KEYS;
+            for (int i = 0; i < MAX_PRESSED_KEYS; i++) {
+                sysState.pressedKeys[i] = i;
+            }
+        }
+    }
     Serial.println("Testing displayUpdateTask worst-case execution time...");
     uint32_t startTime = micros();
     for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
@@ -419,7 +442,29 @@ void setup() {
             for (int i = 0; i < POLYPHONY; i++) {
                 sysState.pressedKeys[i] = i;
             }
+            // Enable all DSP features for maximum computation
+            sysState.params.filterCutoff = 64;
+            sysState.params.filterRes = 100;
+            sysState.params.lfoDepth = 127;
+            sysState.params.mixOsc2 = 50;
+            sysState.params.subOscMix = 50;
+            sysState.params.noiseMix = 25;
+            sysState.params.ringModMix = 25;
+            sysState.params.wavefold = 64;
+            sysState.params.delayMix = 64;
         }
+    }
+    // Directly activate all voices for worst-case ISR processing
+    for (int v = 0; v < POLYPHONY; v++) {
+        voices[v].active = true;
+        voices[v].phase = 0;
+        voices[v].step = voiceEngineGetStepSizeForMidiNote(60 + v);
+        voices[v].targetStep = voices[v].step;
+        voices[v].baseStep = voices[v].step;
+        voices[v].envValue = 0x8000;  // Mid envelope value
+        voices[v].envState = VOICE_ENV_SUSTAIN;
+        voices[v].key = v;
+        voices[v].retrigger = false;
     }
     Serial.println("Testing sampleISR worst-case execution time...");
     uint32_t startTime = micros();
