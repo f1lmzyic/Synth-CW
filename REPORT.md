@@ -125,24 +125,13 @@ Using the measured WCET values, the total processor demand in this worst-case si
 
 ## Shared Data Structures and Synchronisation
 
-Shared resources are protected with mutexes, queues, semaphores, and atomic access.
-
-- **`sysState`**  
-  Stores the main shared system state and is protected by `sysState.mutex`.
-
-- **`msgInQ`**  
-  Holds incoming CAN messages for `decodeTask`.
-
-- **`msgOutQ`**  
-  Holds outgoing CAN messages for `CAN_TX_Task`.
-
-- **`CAN_TX_Semaphore`**  
-  Used to control access to CAN transmit mailboxes.
-
-- **`pitchBendValue`**  
-  Shared pitch bend value used by the audio engine.
-
-
+| Shared resource | Accessed by | Protection method | Reason |
+|---|---|---|---|
+| `sysState` | UI tasks, audio/control logic, CAN decode path | `sysState.mutex` | Prevents inconsistent updates to shared synthesizer state |
+| `msgInQ` | `CAN_RX_ISR`, `decodeTask` | FreeRTOS queue | Safely transfers received CAN frames from ISR to task context |
+| `msgOutQ` | producer tasks, `CAN_TX_Task` | FreeRTOS queue | Decouples message generation from CAN transmission |
+| `CAN_TX_Semaphore` | `CAN_TX_Task`, `CAN_TX_ISR` | Binary/counting semaphore | Synchronises task-level transmission with mailbox availability |
+| `pitchBendValue` | input/control path, audio path | atomic/simple shared update | Small shared control value used without multi-step state changes |
 
 ---
 
