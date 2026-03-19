@@ -142,64 +142,6 @@ All hard real-time deadlines (audio at 22 kHz) are met. The display task, which 
 
 Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemption, and circular wait. This analysis examines inter-task blocking dependencies.
 
-### Resource Dependency Graph
-
-```mermaid
-flowchart TB
-    subgraph ISRs["Interrupt Service Routines"]
-        CAN_RX_ISR["CAN_RX_ISR"]
-        CAN_TX_ISR["CAN_TX_ISR"]
-        sampleISR["sampleISR"]
-    end
-
-    subgraph Resources["Shared Resources"]
-        msgInQ[("msgInQ<br/>(FreeRTOS Queue)")]
-        msgOutQ[("msgOutQ<br/>(FreeRTOS Queue)")]
-        CAN_TX_Sem[("CAN_TX_Semaphore<br/>(Counting Sem)")]
-        mutex[("sysState.mutex<br/>(FreeRTOS Mutex)")]
-        voices[("voices[]<br/>(volatile)")]
-        pitchBend[("pitchBendValue<br/>(atomic)")]
-    end
-
-    subgraph Tasks["FreeRTOS Tasks"]
-        decodeTask["decodeTask"]
-        CAN_TX_Task["CAN_TX_Task"]
-        scanKeysTask["scanKeysTask"]
-        pitchBendTask["pitchBendTask"]
-        scanJoystickTask["scanJoystickTask"]
-        displayUpdateTask["displayUpdateTask"]
-    end
-
-    %% ISR connections
-    CAN_RX_ISR -->|"xQueueSendFromISR"| msgInQ
-    CAN_TX_ISR -->|"xSemaphoreGiveFromISR"| CAN_TX_Sem
-    sampleISR -->|"read"| voices
-    sampleISR -->|"read"| pitchBend
-
-    %% Task to resource connections
-    decodeTask -->|"xQueueReceive"| msgInQ
-    decodeTask -->|"lock"| mutex
-
-    CAN_TX_Task -->|"xQueueReceive"| msgOutQ
-    CAN_TX_Task -->|"xSemaphoreTake"| CAN_TX_Sem
-
-    scanKeysTask -->|"xQueueSend"| msgInQ
-    scanKeysTask -->|"xQueueSend"| msgOutQ
-    scanKeysTask -->|"lock"| mutex
-
-    pitchBendTask -->|"lock"| mutex
-    pitchBendTask -->|"atomic write"| pitchBend
-
-    scanJoystickTask -->|"lock"| mutex
-
-    displayUpdateTask -->|"lock"| mutex
-
-    %% Voice engine (called from scanKeysTask via dspUpdateParams)
-    scanKeysTask -.->|"writes via<br/>voiceEngineUpdateParams"| voices
-```
-
-### Analysis by Deadlock Condition
-
 **1. Mutual Exclusion:** Present - `sysState.mutex` provides exclusive access.
 
 **2. Hold-and-Wait:** NOT present - No task holds one resource while waiting for another:
