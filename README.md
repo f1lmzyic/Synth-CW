@@ -272,13 +272,23 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 
 ## Advanced Features
 
-| Feature | Description |
-|---|---|
-| **4-Voice Polyphony** | 4-voice polyphonic allocator with round-robin assignment |
-| **Dual primary oscillators** | OSC1 provides continuous waveform morphing (saw→square→tri→sine), while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
-| **Sub-oscillator and noise source** | A dedicated sub-oscillator reinforces the low end, and the 32-bit LFSR noise source is available for more percussive or textured sounds |
-| **Multi-board CAN Stacking** | Configure as sender or receiver module (West/Middle/East). Shares voice allocation and key events across up to 3 stacked keyboards via CAN bus. |
-| **Filter section** | Three models: Standard state-variable filter (LP, HP, BP, notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
-| **Drive and wavefolding** | The signal can be shaped further using pre-filter drive and digital wavefolding |
-| **Envelope and modulation control** | The synth includes ADSR envelope, LFO (rate/depth with pitch/filter targets), and glide/portamento |
-| **Integrated digital effects** | The output stage includes delay (8192-sample), chorus (2048-sample modulated delay), bit-crusher, and decimator |
+This section highlights the key differentiating features that go beyond the basic requirements.
+
+| Feature | Description | Requirement |
+|---|---|:---:|
+| **4-Voice Polyphony** | 4-voice polyphonic allocator with round-robin assignment for richer chords | - |
+| **Dual Oscillators** | OSC1 provides waveform morphing (saw→square→tri→sine), OSC2 adds detune, octave shift, and hard sync | Req. 1 |
+| **Sub-Oscillator** | Square wave one octave below for reinforced bass | - |
+| **Noise Generator** | 32-bit LFSR noise for percussion and texture | - |
+| **Ring Modulation** | Bright, inharmonic tones by multiplying OSC1 × OSC2 | - |
+| **Filter Models** | Three selectable filters: SVF (LP/HP/BP/Notch), Moog Ladder (4-pole), MS-20 Sallen-Key | - |
+| **Drive & Wavefolding** | Pre-filter distortion and threshold-based wavefolding for harmonic coloration | - |
+| **ADSR Envelope** | Volume envelope with attack, decay, sustain, release stages | - |
+| **LFO Modulation** | Low-frequency oscillator targeting pitch and filter cutoff | - |
+| **Glide/Portamento** | Smooth pitch transitions between notes | - |
+| **Pitch Bend** | Joystick-controlled pitch modulation | - |
+| **Digital Effects** | 8192-sample delay, 2048-sample chorus, bit-crusher, decimator | - |
+| **Multi-Board CAN** | Stack up to 3 keyboards; sender/receiver modes with automatic voice sharing | Req. 6-8 |
+| **Real-Time Control** | Perceptible zero-latency response via 22 kHz audio ISR | Req. 2 |
+| **OLED Interface** | 128×32 display with waveform scope, envelope visualization, and 7 parameter pages | Req. 4-5 |
+| **Compile-Time Profiling** | `#define`-gated WCET measurement for each task | Req. 12 ||
