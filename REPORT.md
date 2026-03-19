@@ -150,6 +150,8 @@ Shared resources are protected with mutexes, queues, semaphores, and atomic acce
 Looking through the task interactions, there is no obvious deadlock path in the current design. Most shared data goes through one mutex, `sysState.mutex`, instead of several nested locks, which keeps things simpler.
 
 The CAN parts use queues and a semaphore to pass data between interrupts and tasks. Since the interrupt handlers do not try to take the mutex, and the tasks are not holding one lock while waiting on another, a circular wait does not appear in the code. The more realistic issue here is short blocking time, not deadlock.
+
+
 ---
 
 ## Audio Pipeline
