@@ -3,13 +3,13 @@
 #include <STM32FreeRTOS.h>
 #include <bitset>
 
-// #define TEST_SCANKEYS     // Test scanKeysTask worst-case (12 key messages) - 143 us
-// #define TEST_DISPLAY      // Test displayUpdateTask worst-case - 16674 us
+// #define TEST_SCANKEYS        // Test scanKeysTask worst-case (12 key messages) - 152 us
+// #define TEST_DISPLAY      // Test displayUpdateTask worst-case - 16040 us
 // #define TEST_DECODE       // Test decodeTask worst-case - 11us
 // #define TEST_CANTX        // Test CAN_TX_Task worst-case - 4 us
-// #define TEST_SAMPLEISR    // Test sampleISR worst-case - 22 us
-// #define TEST_PITCHBEND    // Test pitchBend worst-case
-// #define TEST_JOYSTICK     // Test joystick worst-case
+// #define TEST_SAMPLEISR    // Test sampleISR worst-case - 21 us
+// #define TEST_PITCHBEND    // Test pitchBend worst-case - 13 us
+// #define TEST_JOYSTICK     // Test joystick worst-case - 171 us
 
 // Number of iterations for timing measurement
 #define TEST_ITERATIONS 32

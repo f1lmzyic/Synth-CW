@@ -181,6 +181,10 @@ void scanKeysTask(void *pvParameters) {
 
   bool requestPitchBendToggle = false;
 
+  enableMuxFast();
+  setOutFast(true);
+  
+
 #ifdef TEST_SCANKEYS
   // Test mode: run once without blocking
 #else
@@ -233,11 +237,7 @@ void scanKeysTask(void *pvParameters) {
     setRow(6, sysState.eastOut);
     delayMicroseconds(3);
     std::bitset<4> cols6 = readCols();
-    bool eastIn = !cols6[3]; // East Input
-    localInputs[24] = cols6[0];
-    localInputs[25] = cols6[1];
-    localInputs[26] = cols6[2];
-    localInputs[27] = cols6[3];
+    bool eastIn = !cols6[3];
 
     // Hot-plug connection detection and handshake
     updateConnectionState(westIn, eastIn);
@@ -333,24 +333,8 @@ void scanKeysTask(void *pvParameters) {
       if (lock) {
         sysState.pitchBendEnabled = !sysState.pitchBendEnabled;
       }
+    }
 #endif
-    }
-
-    // Both axes are read here (not in pitchBendTask) to avoid concurrent ADC
-    int16_t joyY = analogRead(JOYY_PIN);
-    noInterrupts();
-    cachedJoyY = joyY;
-    interrupts();
-
-    bool pbEnabled = false;
-    {
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
-        pbEnabled = sysState.pitchBendEnabled;
-      }
-    }
-    navUpdate(joyY, pbEnabled);
-
 
     // Update DSP parameters outside mutex to avoid blocking ISR
     // Only main board (no right neighbor) should generate sound
