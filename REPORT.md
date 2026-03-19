@@ -85,7 +85,7 @@ Total CPU utilisation = 68.23%
 
 ---
 
-## CPU Utilisation by Task
+## CPU Utilisation Percentage Plot
 
 <p align="center">
   <img src="cpu_utilisation.png" width="700">
