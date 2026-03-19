@@ -1,6 +1,6 @@
 # Embedded Music Synthesizer
 
-Real-time STM32 synthesizer with polyphony, live control, OLED UI, and CAN-based multi-board support.
+Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-board support.
 
 ---
 
