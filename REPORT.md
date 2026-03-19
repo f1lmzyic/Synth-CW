@@ -59,5 +59,7 @@ This section outlines each task in terms of its theoretical minimum initiation i
 | `decodeTask` | 11 | 36 exec / 25.2 ms | 1.57 |
 | `CAN_TX_Task` | 4 | 36 exec / 60 ms | 0.24 |
 
+Total CPU utilisation = 68.23%
+## CPU Utilisation by Task
 
-Using the measured worst-case execution times, the total CPU utilisation of the system was calculated as 68.23%. The dominant load comes from `sampleISR`, which accounts for 48.40% of total CPU time due to the 22 kHz audio rate. The second largest contribution comes from `displayUpdateTask` at 16.04%, while the remaining tasks and interrupts each contribute only a small fraction of the total load.
+![CPU utilisation](images/cpu_utilisation.png)
