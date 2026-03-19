@@ -24,9 +24,9 @@ Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-boar
 
 ## Overview
 
-This project implements a real-time music synthesizer on an STM32 platform. The system handles note input, audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
+This project implements a real-time 8-voice polyphonic music synthesizer on an STM32L432KC platform using FreeRTOS. The system handles note input, 22 kHz 8-bit PWM audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
 
-The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive.
+The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive. The synthesiser can be configured during compilation to act as a sender or receiver module, allowing up to 3 keyboards to be stacked via CAN bus.
 
 ---
 
@@ -68,25 +68,25 @@ This section gives the minimum initiation interval for each task and ISR, togeth
 
 ### 2.2 Worst Case Execution Time / CPU Utilization
 
-The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval.
+The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval. *(Note: CAN ISR times include the measured base loop overhead plus the ~4us and ~3us actual hardware ISR function overhead).*
 
-| Task / ISR | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
-|---|---:|---:|---:|
-| `sampleISR` | 22 | 45.45 us | 48.40 |
-| `scanKeysTask` | 282 | 20000 us | 1.41 |
-| `displayUpdateTask` | 16040 | 100000 us | 16.04 |
-| `CAN_RX_ISR` | 3 | 700 us | 0.43 |
-| `CAN_TX_ISR` | 1 | 700 us | 0.14 |
-| `decodeTask` | 11 | 36 exec / 25.2 ms | 1.57 |
-| `CAN_TX_Task` | 4 | 36 exec / 60 ms | 0.24 |
+| Task / ISR | Min (us) | Max / WCET (us) | Minimum initiation interval | CPU utilisation (%) |
+|---|---:|---:|---:|---:|
+| `sampleISR` | 23.00 | 34.00 | 45.45 us | 74.81 |
+| `scanKeysTask` | 41.00 | 55.00 | 20000 us | 0.28 |
+| `displayUpdateTask` | 14092.00 | 14135.00 | 100000 us | 14.14 |
+| `CAN_RX_ISR` | 4.06 | 4.14 | 700 us | 0.59 |
+| `CAN_TX_ISR` | 3.06 | 3.08 | 700 us | 0.44 |
+| `decodeTask` | 7.00 | 10.00 | 36 exec / 25.2 ms | 1.43 |
+| `CAN_TX_Task` | 6.00 | 10.00 | 36 exec / 60 ms | 0.60 |
 
-Total CPU utilisation = 68.23%
+Total CPU utilisation = 92.29%
 
 ---
 
 ## CPU Utilisation
 
-CPU utilisation percentages are shown in the Task Characterization table above. Total utilisation is approximately 68%.
+CPU utilisation percentages are shown in the Task Characterization table above. Total utilisation is approximately 92%.
 
 ---
 
@@ -122,14 +122,15 @@ The CAN path does not create that pattern. `CAN_RX_ISR` and `CAN_TX_ISR` do not 
 
 | Stage | Function |
 |---|---|
-| **Voice allocation** | Assigns notes across available voices and reuses voices when required |
-| **Oscillator section** | Generates the base sound using OSC1, OSC2, and the sub-oscillator |
-| **Additional sources** | Adds noise and ring modulation for more varied timbre |
-| **Modulation** | Applies ADSR envelope, LFO (pitch/filter targets), glide, and pitch bend |
-| **Filter stage** | State-variable filter with selectable type (LP/HP/BP/Notch), cutoff, and resonance |
+| **Voice allocation** | 8-voice polyphonic allocator with round-robin assignment, per-voice phase/ADSR state |
+| **Oscillator section** | Generates the base sound using OSC1 (PolyBLEP morphing), OSC2 (with detune/hard-sync), and the sub-oscillator |
+| **Additional sources** | Adds noise (32-bit LFSR) and ring modulation for more varied timbre |
+| **Modulation** | Applies ADSR envelope (volume), AD envelope (modulation), LFO (pitch/filter targets), glide, and pitch bend |
+| **Filter stage** | Three models: Standard SVF (LP/HP/BP/Notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
 | **Nonlinear shaping** | Applies drive and wavefolding for stronger harmonic colouring |
-| **Effects** | Adds delay (time, feedback, mix) |
-| **Output** | Scales and writes the final audio signal to the output path |
+| **Effects** | Adds delay (8192-sample), chorus (2048-sample BDD), bit-crusher, and decimator |
+| **Output** | Scales and writes the final audio signal (22 kHz, 8-bit PWM) to the output path |
+| **Patch Memory** | Save and load 16 presets to STM32 flash with CRC validation |
 
 ---
 
@@ -137,19 +138,20 @@ The CAN path does not create that pattern. `CAN_RX_ISR` and `CAN_TX_ISR` do not 
 
 | Control Element | Purpose |
 |---|---|
-| **Keyboard matrix** | Used to enter notes directly on the board |
-| **Rotary knobs** | Adjust the currently selected parameter |
+| **Keyboard matrix** | Used to enter notes directly on the board with no perceptible delay |
+| **Rotary knobs** | Adjust the volume (at least 8 increments) or edit the currently selected parameter |
 | **Joystick** | Handles mode changes, page movement, parameter selection, and display view changes |
-| **OLED display** | Shows the performance screen, alternate views, and menu pages |
-| **Board connection logic** | Detects neighbouring boards and supports linked-board operation |
+| **OLED display** | Shows the performance screen (including current note and volume level), alternate views, and menu pages |
+| **LED** | Toggles every 100ms alongside the OLED refresh |
+| **Board connection logic** | Detects neighbouring boards and supports linked-board operation (West/Middle/East) via CAN bus |
 
 ### Interface Structure
 
-The user interface uses a multi-page menu rather than a single flat screen. A short joystick press switches between performance mode and menu mode. A long press cycles through the available display views. Left and right movement changes page, while up and down movement selects a parameter on the current page. The highlighted parameter is then edited using the rotary knob.
+The user interface uses a multi-page menu rather than a single flat screen. A short joystick press switches between performance mode and menu mode. A long press cycles through the available display views. Left and right movement changes page, while up and down movement selects a parameter on the current page. The highlighted parameter is then edited using the rotary knob. The UI tasks run every 100ms.
 
 ### Display Modes
 
-- Performance view
+- Performance view (shows the note being played and the current volume level)
 - Oscilloscope view
 - Envelope view
 
@@ -157,10 +159,15 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 
 - OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
 - OSC2 page (Sub-oscillator, noise, ring modulation, wavefolder)
-- FLT page (Filter cutoff, resonance, envelope depth, filter type)
+- FLT page (Filter cutoff, resonance, envelope depth)
+- MODEL page (Filter type: SVF, Moog Ladder, MS-20)
 - ENV page (ADSR envelope: attack, decay, sustain, release)
 - MOD page (LFO rate/depth, glide time)
+- MENV page (Modulation envelope parameters)
+- S&H page (Sample and hold parameters)
 - FX page (Delay time/feedback/mix, oscillator sync)
+- CHO page (Chorus, bit-crusher, decimator parameters)
+- PATCH page (Save/load presets)
 
 ---
 
@@ -168,10 +175,12 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 
 | Feature | Description |
 |---|---|
-| **Dual primary oscillators** | OSC1 provides continuous waveform morphing, while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
-| **Sub-oscillator and noise source** | A dedicated sub-oscillator reinforces the low end, and the noise source is available for more percussive or textured sounds |
-| **Ring modulation** | OSC1 and OSC2 can be combined through ring modulation to produce brighter and more inharmonic tones |
-| **Filter section** | Standard state-variable filter with LP, HP, BP, and notch responses, plus cutoff, resonance, and envelope depth controls |
+| **8-Voice Polyphony** | 8-voice polyphonic allocator with round-robin assignment |
+| **Dual primary oscillators** | OSC1 provides continuous PolyBLEP waveform morphing (saw→square→tri→sine), while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
+| **Sub-oscillator and noise source** | A dedicated sub-oscillator reinforces the low end, and the 32-bit LFSR noise source is available for more percussive or textured sounds |
+| **Multi-board CAN Stacking** | Configure as sender or receiver module (West/Middle/East). Shares voice allocation and key events across up to 3 stacked keyboards via CAN bus. |
+| **Filter section** | Three models: Standard state-variable filter (LP, HP, BP, notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
 | **Drive and wavefolding** | The signal can be shaped further using pre-filter drive and digital wavefolding |
 | **Envelope and modulation control** | The synth includes ADSR envelope, LFO (rate/depth with pitch/filter targets), and glide/portamento |
-| **Integrated digital effects** | The output stage includes delay (time/feedback/mix) |
+| **Patch Memory** | Save and load 16 presets to STM32 flash memory, protected by CRC validation |
+| **Integrated digital effects** | The output stage includes delay (8192-sample), chorus (2048-sample BDD), bit-crusher, and decimator |
