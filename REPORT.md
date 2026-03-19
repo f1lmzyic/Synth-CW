@@ -99,7 +99,8 @@ Total CPU utilisation = 68.23%
 
 The system uses fixed priorities, where interrupts run above the task level. Among the tasks, `decodeTask` has the highest priority, followed by `scanKeysTask` and `CAN_TX_Task`, while `displayUpdateTask` runs at the lowest priority.
 
-In the critical instant case, all tasks and interrupts are assumed to be released at the same time. Based on the measured WCET values, each task still finishes within its minimum initiation interval. `sampleISR` is the most time-sensitive part of the system, but it still executes within its available time budget. The other tasks also complete in time, so the schedule meets all deadlines under the worst-case conditions.
+In the critical instant case, all tasks and interrupts are assumed to be released at the same time. Based on the measured WCET values, each task still finishes within its minimum initiation interval. `sampleISR` is the most time-sensitive part of the system, but it still executes within its available time range. The other tasks also complete in time, so the schedule meets all deadlines under the worst-case conditions.
+
 ---
 
 
