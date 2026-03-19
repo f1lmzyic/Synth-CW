@@ -71,6 +71,8 @@ This section outlines each task in terms of its theoretical minimum initiation i
 
 ### 2.2 Worst Case Execution Time / CPU Utilization
 
+The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval.
+
 | Task / ISR | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
 |---|---:|---:|---:|
 | `sampleISR` | 22 | 45.45 us | 48.40 |
