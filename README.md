@@ -17,7 +17,6 @@ Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-boar
 - [Deadlock Analysis](#deadlock-analysis)
 - [Audio Pipeline](#audio-pipeline)
 - [Controls and UI](#controls-and-ui)
-  - [Display Pages](#display-pages)
 - [Advanced Features](#advanced-features)
 
 ---
