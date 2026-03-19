@@ -173,29 +173,34 @@ The CAN parts use queues and a semaphore to pass data between interrupts and tas
 
 | Control Element | Purpose |
 |---|---|
-| **Keyboard matrix** | Used for local note input |
-| **Rotary knobs** | Change the value of the selected setting |
-| **Joystick** | Used to move through pages, highlight parameters, and switch modes |
-| **OLED display** | Displays the main performance screen and menu pages |
-| **Board connection logic** | Detects and supports linked-board operation |
+| **Keyboard matrix** | Used to play notes directly on the board |
+| **Rotary knobs** | Used to change the value of the selected parameter |
+| **Joystick** | Used for menu control, page switching, parameter selection, and changing display views |
+| **OLED display** | Shows the performance screen, extra display views, and parameter pages |
+| **Board connection logic** | Detects nearby boards and supports linked-board use |
 
 ### Interface Structure
 
-Compared with the earlier flat layout, the interface now uses a multi-page menu system. The joystick is used for navigation: a short press changes between performance and menu modes, a long press cycles through views, left/right changes page, and up/down moves the cursor between parameters. Once a parameter is selected, its value is changed using the rotary control.
+The interface was changed from a single flat layout to a multi-page menu system. A short joystick press switches between performance mode and menu mode. A long press cycles through the display views. Moving the joystick left or right changes page, and moving it up or down selects a parameter on that page. The selected value is then adjusted with the rotary knob.
 
-### Display and Parameter Pages
+### Display Modes
 
-- Performance page
-- Oscillator page
-- Oscillator extension page
-- Filter page
-- Filter model page
-- Envelope page
-- Modulation page
-- Modulation envelope page
-- Sample-and-hold page
-- Effects page
-- Chorus / bitcrusher page
+- Performance view
+- Oscilloscope view
+- Envelope view
+
+### Parameter Pages
+
+- OSC page
+- OSC2 page
+- FLT page
+- MODEL page
+- ENV page
+- MOD page
+- MENV page
+- S\&H page
+- FX page
+- CHO page
 
 ---
 
