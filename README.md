@@ -24,7 +24,7 @@ Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-boar
 
 ## Overview
 
-This project implements a real-time 8-voice polyphonic music synthesizer on an STM32L432KC platform using FreeRTOS. The system handles note input, 22 kHz 8-bit PWM audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
+This project implements a real-time 4-voice polyphonic music synthesizer on an STM32L432KC platform using FreeRTOS. The system handles note input, 22 kHz 8-bit PWM audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
 
 The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive. The synthesiser can be configured during compilation to act as a sender or receiver module, allowing up to 3 keyboards to be stacked via CAN bus.
 
@@ -33,7 +33,9 @@ The design separates time-critical audio work from slower interface and communic
 
 ## Demo Video
 
-[Demo Video](https://imperiallondon-my.sharepoint.com/:v:/g/personal/sp2223_ic_ac_uk/IQC2wBiW3lO6S6BrIvhXSAz3ARyBY4vfPfMll9ZakvH55zE?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=HD41xd)
+[![ES Monosynth Pro Demo](https://img.youtube.com/vi/55RAnd3v-z0/maxresdefault.jpg)](https://youtu.be/55RAnd3v-z0)
+
+[Watch on YouTube](https://youtu.be/55RAnd3v-z0)
 
 ---
 
@@ -47,7 +49,6 @@ The design separates time-critical audio work from slower interface and communic
 | `CAN_TX_Task` | Thread | Event-driven (`msgOutQ` + `CAN_TX_Semaphore`) | Transmit queued CAN frames |
 | `displayUpdateTask` | Thread | Periodic (100 ms) | Refresh OLED menu and performance views |
 | `pitchBendTask` | Thread | Periodic (50 ms) | Process joystick Y-axis for pitch bend control |
-| `scanJoystickTask` | Thread | Periodic (100 ms) | Read joystick analog values for navigation |
 | `CAN_RX_ISR` | Hardware interrupt | Event-driven | Push received CAN frame into `msgInQ` |
 | `CAN_TX_ISR` | Hardware interrupt | Event-driven | Release TX mailbox via `CAN_TX_Semaphore` |
 
@@ -67,7 +68,6 @@ This section gives the minimum initiation interval for each task and ISR, togeth
 | `decodeTask`       |                 **25.2 ms** | `msgInQ` length is 36. Under worst-case CAN traffic, the queue can fill in (36 × 0.7 = 25.2) ms. |
 | `CAN_TX_Task`      |                   **60 ms** | `scanKeysTask` runs every 20 ms and can generate up to 12 outgoing messages each cycle, so a 36-item `msgOutQ` can fill in 60 ms. |
 | `pitchBendTask`    |                   **50 ms** | Periodic task using `vTaskDelayUntil()` with a 50 ms period. |
-| `scanJoystickTask` |                  **100 ms** | Periodic task using `vTaskDelayUntil()` with a 100 ms period. |
 
 ### 2.2 Worst Case Execution Time / CPU Utilization
 
@@ -81,9 +81,8 @@ The WCET values were measured separately by enabling the corresponding profiling
 | `decodeTask`        |        11 |                    25.2 ms |                0.04 |
 | `CAN_TX_Task`       |         4 |                       60 ms |                0.01 |
 | `pitchBendTask`     |        13 |                       50 ms |                0.03 |
-| `scanJoystickTask`  |       171 |                      100 ms |                0.17 |
 
-**Total CPU utilisation ≈ 106.09%**
+**Total CPU utilisation ≈ 105.92%**
 
 *Note: The total exceeds 100% because `sampleISR` dominates. In practice, the ISR completes within its deadline (40 us < 45 us), leaving ~5 us slack per sample period. The background tasks are scheduled during ISR idle time and complete well within their longer periods.*
 
@@ -108,8 +107,7 @@ Under rate monotonic scheduling (RMS), priorities are assigned inversely to peri
 | 2        | `pitchBendTask` | 50 ms | 13 us |
 | 3        | `decodeTask` | 25.2 ms (event) | 11 us |
 | 4        | `CAN_TX_Task` | 60 ms (event) | 4 us |
-| 5        | `displayUpdateTask` | 100 ms | 16149 us |
-| Lowest   | `scanJoystickTask` | 100 ms | 171 us |
+| Lowest   | `displayUpdateTask` | 100 ms | 16149 us |
 
 ### Response Time Analysis
 
@@ -186,8 +184,8 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
          ┌────────────────────┘     └──────────────┐       │
          │                                         │       │
 ┌────────┴────────┐  ┌─────────────────┐  ┌───────┴───────┴───────┐
-│ pitchBendTask   │  │scanJoystickTask │  │  displayUpdateTask    │
-└─────────────────┘  └─────────────────┘  └───────────────────────┘
+│ pitchBendTask   │  │  displayUpdateTask    │
+└─────────────────┘  └───────────────────────┘
 ```
 
 ### Analysis by Deadlock Condition
@@ -213,7 +211,6 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
 | `scanKeysTask` | `sysState.mutex` | 5ms timeout |
 | `pitchBendTask` | `sysState.mutex` | 5ms timeout |
 | `displayUpdateTask` | `sysState.mutex` | 50ms timeout |
-| `scanJoystickTask` | `sysState.mutex` | 5ms timeout |
 
 ### Conclusion
 
@@ -229,15 +226,14 @@ Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemptio
 
 | Stage | Function |
 |---|---|
-| **Voice allocation** | 8-voice polyphonic allocator with round-robin assignment, per-voice phase/ADSR state |
-| **Oscillator section** | Generates the base sound using OSC1 (PolyBLEP morphing), OSC2 (with detune/hard-sync), and the sub-oscillator |
+| **Voice allocation** | 4-voice polyphonic allocator with round-robin assignment, per-voice phase/ADSR state |
+| **Oscillator section** | Generates the base sound using OSC1 (waveform morphing), OSC2 (with detune/hard-sync), and the sub-oscillator |
 | **Additional sources** | Adds noise (32-bit LFSR) and ring modulation for more varied timbre |
 | **Modulation** | Applies ADSR envelope (volume), AD envelope (modulation), LFO (pitch/filter targets), glide, and pitch bend |
 | **Filter stage** | Three models: Standard SVF (LP/HP/BP/Notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
 | **Nonlinear shaping** | Applies drive and wavefolding for stronger harmonic colouring |
-| **Effects** | Adds delay (8192-sample), chorus (2048-sample BDD), bit-crusher, and decimator |
+| **Effects** | Adds delay (8192-sample), chorus (2048-sample modulated delay), bit-crusher, and decimator |
 | **Output** | Scales and writes the final audio signal (22 kHz, 8-bit PWM) to the output path |
-| **Patch Memory** | Save and load 16 presets to STM32 flash with CRC validation |
 
 ---
 
@@ -258,23 +254,19 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 
 ### Display Modes
 
-- Performance view (shows the note being played, volume level, and waveform preview)
+- Performance view (shows the note being played, volume level, waveform preview, and octave)
 - Oscilloscope view (real-time animated waveform display with key and pitch bend status)
-- Envelope view
+- Envelope visualization (displayed within the ENV parameter page)
 
 ### Parameter Pages
 
+- PERF page (Performance: waveform preview, octave control, volume)
 - OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
 - OSC2 page (Sub-oscillator, noise, ring modulation, wavefolder)
-- FLT page (Filter cutoff, resonance, envelope depth)
-- MODEL page (Filter type: SVF, Moog Ladder, MS-20)
-- ENV page (ADSR envelope: attack, decay, sustain, release)
+- FLT page (Filter cutoff, resonance, envelope depth, filter type LP/HP/BP/Notch)
+- ENV page (ADSR envelope: attack, decay, sustain, release with visual display)
 - MOD page (LFO rate/depth, glide time)
-- MENV page (Modulation envelope parameters)
-- S&H page (Sample and hold parameters)
 - FX page (Delay time/feedback/mix, oscillator sync)
-- CHO page (Chorus, bit-crusher, decimator parameters)
-- PATCH page (Save/load presets)
 
 ---
 
@@ -282,12 +274,11 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 
 | Feature | Description |
 |---|---|
-| **8-Voice Polyphony** | 8-voice polyphonic allocator with round-robin assignment |
-| **Dual primary oscillators** | OSC1 provides continuous PolyBLEP waveform morphing (saw→square→tri→sine), while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
+| **4-Voice Polyphony** | 4-voice polyphonic allocator with round-robin assignment |
+| **Dual primary oscillators** | OSC1 provides continuous waveform morphing (saw→square→tri→sine), while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
 | **Sub-oscillator and noise source** | A dedicated sub-oscillator reinforces the low end, and the 32-bit LFSR noise source is available for more percussive or textured sounds |
 | **Multi-board CAN Stacking** | Configure as sender or receiver module (West/Middle/East). Shares voice allocation and key events across up to 3 stacked keyboards via CAN bus. |
 | **Filter section** | Three models: Standard state-variable filter (LP, HP, BP, notch), Moog Ladder (4-pole with soft-clip), and MS-20 Sallen-Key (asymmetric feedback) |
 | **Drive and wavefolding** | The signal can be shaped further using pre-filter drive and digital wavefolding |
 | **Envelope and modulation control** | The synth includes ADSR envelope, LFO (rate/depth with pitch/filter targets), and glide/portamento |
-| **Patch Memory** | Save and load 16 presets to STM32 flash memory, protected by CRC validation |
-| **Integrated digital effects** | The output stage includes delay (8192-sample), chorus (2048-sample BDD), bit-crusher, and decimator |
+| **Integrated digital effects** | The output stage includes delay (8192-sample), chorus (2048-sample modulated delay), bit-crusher, and decimator |
