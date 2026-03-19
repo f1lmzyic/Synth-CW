@@ -14,10 +14,16 @@ struct AxisState {
 
 static AxisState axisX, axisY;
 
-// Returns -1, 0, or +1 relative to joystick center
-static int8_t joyDir(int16_t val, int16_t center) {
+// Returns -1, 0, or +1 relative to joystick center.
+// Hysteresis: requires crossing JOY_DEADBAND to activate, but only releases
+// when the value returns within JOY_DEADBAND/2 of center.
+static int8_t joyDir(int16_t val, int16_t center, int8_t prevDir) {
   if (val < center - JOY_DEADBAND) return -1;
   if (val > center + JOY_DEADBAND) return +1;
+  // stay active if still past the release threshold
+  constexpr int16_t EXIT = JOY_DEADBAND / 2;
+  if (prevDir == -1 && val < center - EXIT) return -1;
+  if (prevDir == +1 && val > center + EXIT) return +1;
   return 0;
 }
 
@@ -76,8 +82,8 @@ void navUpdate(int16_t joyX, int16_t joyY, bool pitchBendActive) {
   
   // When pitch bend is active, disable ALL navigation (X and Y axes)
   if (!pitchBendActive) {
-    handleX(joyDir(joyX, JOY_CENTER_X), now);
-    handleY(joyDir(joyY, JOY_CENTER_Y), now);
+    handleX(joyDir(joyX, JOY_CENTER_X, axisX.dir), now);
+    handleY(joyDir(joyY, JOY_CENTER_Y, axisY.dir), now);
   } else {
     // Reset both axes so navigation doesn't fire stale events
     // the moment pitch bend is toggled off while joystick is still deflected

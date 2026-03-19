@@ -4,8 +4,17 @@
 #include "navigation.h"
 #include "ui.h" // For uiHandleKnobRotation
 #include "voice_engine.h" // For pitchBendValue
+#include <atomic>
 
 TaskHandle_t scanKeysHandle = NULL;
+TaskHandle_t scanKnobsHandle = NULL;
+TaskHandle_t pitchBendHandle = NULL;
+TaskHandle_t scanJoystickHandle = NULL;
+
+static std::atomic<uint32_t> atomicKeyMask{0};
+
+// Joystick Y cache: written by scanKeysTask, read by pitchBendTask.
+static volatile int16_t cachedJoyY = JOY_CENTER_Y;
 
 // ============================================================================
 // Multi-keyboard connection handling
@@ -59,11 +68,19 @@ static void performHandshake(bool westIn, bool eastIn) {
     sysState.hasLeft = (sysState.lastHandshakePos >= 0);
     sysState.hasRight = eastIn;
 
+    uint8_t prevKeyboardId = sysState.keyboardId;
+
     // Determine keyboard position in chain
     if (!sysState.hasLeft) {
       sysState.keyboardId = 0;
     } else {
       sysState.keyboardId = sysState.lastHandshakePos + 1;
+    }
+
+    // if the main board and our position shifted (e.g. board plugged to the left),
+    // update our mainKeyboardId to match our new position so it remain the main board.
+    if (sysState.mainKeyboardId == prevKeyboardId) {
+      sysState.mainKeyboardId = sysState.keyboardId;
     }
   }
 
@@ -74,8 +91,12 @@ static void performHandshake(bool westIn, bool eastIn) {
 
   // Main board immediately broadcasts its ID so satellites get their octave
   // display without waiting for the periodic {M} cycle.
-  if (!sysState.hasLeft) {
-    uint8_t mMsg[8] = {'M', pos, 0, 0, 0, 0, 0, 0};
+  uint8_t priority = 0;
+  if (sysState.hasLeft && sysState.hasRight) priority = 2;
+  else if (millis() > 2000) priority = 1;
+
+  if (sysState.mainKeyboardId == sysState.keyboardId) {
+    uint8_t mMsg[8] = {'M', pos, priority, 0, 0, 0, 0, 0};
     xQueueSend(msgOutQ, mMsg, portMAX_DELAY);
   }
 }
@@ -119,6 +140,11 @@ void hwInit() {
   pinMode(JOYY_PIN, INPUT);
 }
 
+// Lock-free key state read
+uint32_t getKeyMask() {
+  return atomicKeyMask.load(std::memory_order_relaxed);
+}
+
 void setOutMuxBit(const uint8_t bitIdx, const bool value) {
   digitalWrite(REN_PIN, LOW);
   digitalWrite(RA0_PIN, bitIdx & 0x01);
@@ -153,19 +179,23 @@ void scanKeysTask(void *pvParameters) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
 
   static Knob knobs[4];
-  static bool prevJoyButton = false;  // For pitch bend toggle
+  static bool prevJoyButton = false;
+
+  bool requestPitchBendToggle = false;
 
   while (true) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
     std::bitset<32> localInputs;
 
-    // Scan key matrix rows 0-4
+    // Scan key matrix rows 0-4 using the original setRow approach.
+    // setRow() ends with REN=HIGH
+    // The 3µs delay lets the hardware mux settle before columns are read.
     for (int i = 0; i < 5; i++) {
-      setRow(i, true); // Enable row for key scanning
+      setRow(i, true);
       delayMicroseconds(3);
       std::bitset<4> cols = readCols();
-      localInputs[i * 4] = cols[0];
+      localInputs[i * 4]     = cols[0];
       localInputs[i * 4 + 1] = cols[1];
       localInputs[i * 4 + 2] = cols[2];
       localInputs[i * 4 + 3] = cols[3];
@@ -174,17 +204,13 @@ void scanKeysTask(void *pvParameters) {
       if (i == 3) {
         int8_t dir3 = knobs[3].update((cols[0] << 1) | cols[1]);
         int8_t dir2 = knobs[2].update((cols[2] << 1) | cols[3]);
-        if (dir3 != 0)
-          uiHandleKnobRotation(3, dir3);
-        if (dir2 != 0)
-          uiHandleKnobRotation(2, dir2);
+        if (dir3 != 0) uiHandleKnobRotation(3, dir3);
+        if (dir2 != 0) uiHandleKnobRotation(2, dir2);
       } else if (i == 4) {
         int8_t dir1 = knobs[1].update((cols[0] << 1) | cols[1]);
         int8_t dir0 = knobs[0].update((cols[2] << 1) | cols[3]);
-        if (dir1 != 0)
-          uiHandleKnobRotation(1, dir1);
-        if (dir0 != 0)
-          uiHandleKnobRotation(0, dir0);
+        if (dir1 != 0) uiHandleKnobRotation(1, dir1);
+        if (dir0 != 0) uiHandleKnobRotation(0, dir0);
       }
     }
 
@@ -199,12 +225,9 @@ void scanKeysTask(void *pvParameters) {
     bool westIn = !cols5[3];
     bool joyButton = !cols5[2]; // Joystick button pressed (active low)
 
-    // Toggle pitch bend on button press
+    // Toggle pitch bend on button press - wait for batched mutex block
     if (joyButton && !prevJoyButton) {
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
-        sysState.pitchBendEnabled = !sysState.pitchBendEnabled;
-      }
+      requestPitchBendToggle = true;
     }
     prevJoyButton = joyButton;
 
@@ -223,15 +246,19 @@ void scanKeysTask(void *pvParameters) {
 
     // ============================================================================
     // Multi-key detection - detect ALL pressed keys (0-11)
+    // Uses bitmask XOR for efficient change detection
     // ============================================================================
-    // Track which keys are currently pressed (boolean array)
-    static bool keysPressed[KEYS_PER_KEYBOARD] = {false};
-    static bool keysPrevPressed[KEYS_PER_KEYBOARD] = {false};
+    // Track which keys are currently pressed (bitmask: bit i = key i state)
+    static uint32_t currentKeyMask = 0;
+    static uint32_t previousKeyMask = 0;
 
-    // Scan all 12 keys and build pressed keys array
+    // Build current key mask from localInputs (bit i = 1 if key i pressed)
+    currentKeyMask = 0;
     for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
       // localInputs[i] == 0 means key is pressed (active low)
-      keysPressed[i] = !localInputs[i];
+      if (!localInputs[i]) {
+        currentKeyMask |= (1U << i);
+      }
     }
 
     // All boards that have completed their handshake (eastOut=false) periodically
@@ -248,9 +275,14 @@ void scanKeysTask(void *pvParameters) {
       }
     }
 
-    // The leftmost board (no west neighbour) is the main board (plays audio).
-    // A standalone board also has no left neighbour, so it is always main.
-    bool actAsMain = !sysState.hasLeft;
+    // Determine the main board by topology and stickiness:
+    //   middle (both neighbours)  → always main
+    //   standalone (no neighbours) → always main
+    //   edge boards (1 neighbour)  → main if they retained or won mainKeyboardId
+    bool actAsMain =
+        (sysState.hasLeft && sysState.hasRight) ||
+        (!sysState.hasLeft && !sysState.hasRight) ||
+        (sysState.mainKeyboardId == sysState.keyboardId);
 
     // If this board is the main board, periodically broadcast its ID so
     // satellites can compute their relative octave for display.
@@ -263,16 +295,27 @@ void scanKeysTask(void *pvParameters) {
       if (++mBroadcastCounter >= 5) { // every 100 ms
         mBroadcastCounter = 0;
         if (sysState.hasLeft || sysState.hasRight) {
-          uint8_t mMsg[8] = {'M', sysState.keyboardId, 0, 0, 0, 0, 0, 0};
+          uint8_t priority = 0;
+          if (sysState.hasLeft && sysState.hasRight) priority = 2;
+          else if (millis() > 2000) priority = 1;
+          
+          uint8_t mMsg[8] = {'M', sysState.keyboardId, priority, 0, 0, 0, 0, 0};
           xQueueSend(msgOutQ, mMsg, 0); // non-blocking; drop if queue full
         }
       }
     }
 
-    // Compare with previous state to detect changes and send messages
+    // Compare with previous state
+    // XOR gives 1 only where bits differ (key state changed)
+    uint32_t changedKeys = currentKeyMask ^ previousKeyMask;
+
+    // Process only changed keys
     for (int i = 0; i < KEYS_PER_KEYBOARD; i++) {
-      if (keysPrevPressed[i] != keysPressed[i]) {
-        uint8_t msgType = keysPressed[i] ? 'P' : 'R';
+      // Check if bit i is set in changedKeys (key state changed)
+      if ((changedKeys >> i) & 1) {
+        // Extract current key state: 1 = pressed, 0 = released
+        bool keyPressed = (currentKeyMask >> i) & 1;
+        uint8_t msgType = keyPressed ? 'P' : 'R';
         uint8_t TX_Message[8] = {
             msgType, (uint8_t)i, sysState.keyboardId, 0, 0, 0, 0, 0};
 
@@ -285,14 +328,62 @@ void scanKeysTask(void *pvParameters) {
         if (actAsMain) {
           xQueueSend(msgInQ, TX_Message, portMAX_DELAY);
         }
-
-        keysPrevPressed[i] = keysPressed[i];
       }
     }
 
-    // ============================================================================
-    // Read pitch bend enabled state for navigation control
-    // ============================================================================
+    // Update previous mask for next iteration
+    previousKeyMask = currentKeyMask;
+
+    // Lock-free atomic store for key state
+    atomicKeyMask.store(currentKeyMask, std::memory_order_relaxed);
+
+    // Mutex only for pitchBendEnabled toggle
+    // Joystick button still in scanKeysTask
+    if (requestPitchBendToggle) {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        sysState.pitchBendEnabled = !sysState.pitchBendEnabled;
+      }
+    }
+
+    // Both axes are read here (not in pitchBendTask) to avoid concurrent ADC
+    int16_t joyX = analogRead(JOYX_PIN);
+    int16_t joyY = analogRead(JOYY_PIN);
+    noInterrupts();
+    cachedJoyY = joyY;
+    interrupts();
+
+    bool pbEnabled = false;
+    {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        pbEnabled = sysState.pitchBendEnabled;
+      }
+    }
+    navUpdate(joyX, joyY, pbEnabled);
+
+    // Update DSP parameters outside mutex to avoid blocking ISR
+    dspUpdateParams();
+
+    // Reset local state for next cycle
+    requestPitchBendToggle = false;
+  }
+}
+
+// ============================================================================
+// Pitch Bend Task - 50ms interval
+// Processes joystick Y-axis for pitch bend control
+// Priority: 1 (lower than scanKeysTask to not interfere)
+// ============================================================================
+[[noreturn]] void pitchBendTask(void *pvParameters) {
+  // Static variables persist across task invocations
+  static int16_t currentBendCents = 0;
+  static uint32_t lastUpdateMs = 0;
+
+  uint32_t lastWakeTime = xTaskGetTickCount();
+
+  while (true) {
+    // Read pitch bend enabled state
     bool pbEnabled = false;
     {
       MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
@@ -301,93 +392,108 @@ void scanKeysTask(void *pvParameters) {
       }
     }
 
-    // Joystick navigation (Y-axis disabled when pitch bend is active)
-    navUpdate(analogRead(JOYX_PIN), analogRead(JOYY_PIN), pbEnabled);
+    int16_t joyY = cachedJoyY;
+    int16_t joyCenter = JOY_CENTER_Y;
+    int16_t threshold = JOY_THRESHOLD;
 
-    // ============================================================================
-    // Read joystick for pitch bend (Y-axis) - incremental/relative control
-    // Center = hold current pitch, Up = bend up, Down = bend down
-    // Range: ±2 semitones (200 cents) with smooth increments
-    // Toggle with joystick button
-    // ============================================================================
-    {
-      // Static variable to track current pitch bend in cents (-200 to +200)
-      static int16_t currentBendCents = 0;
-      static uint32_t lastUpdateMs = 0;
+    uint8_t newPitchBend = PITCH_BEND_CENTER;
+    int8_t bendSemitones = 0;
 
-      int16_t joyY = analogRead(JOYY_PIN);
-      int16_t joyCenter = JOY_CENTER_Y;
-      int16_t threshold = JOY_THRESHOLD;
+    if (pbEnabled) {
+      uint32_t now = millis();
 
-      uint8_t newPitchBend = PITCH_BEND_CENTER;
-      int8_t bendSemitones = 0;
+      // Rate limit: update every 50ms for smooth gradual control
+      if (now - lastUpdateMs > 50) {
+        lastUpdateMs = now;
 
-      if (pbEnabled) {
-        uint32_t now = millis();
-        
-        // Rate limit: update every 50ms for smooth gradual control
-        if (now - lastUpdateMs > 50) {
-          lastUpdateMs = now;
-          
-          // Calculate how far joystick is pushed from center
-          int16_t joyDelta = 0;
-          if (joyY < joyCenter - threshold) {
-            // Pushed down - bend down
-            joyDelta = joyY - (joyCenter - threshold);  // negative value
-          } else if (joyY > joyCenter + threshold) {
-            // Pushed up - bend up
-            joyDelta = joyY - (joyCenter + threshold);   // positive value
-          }
-          
-          // Scale: max deflection (~350) maps to max bend rate
-          // Small deflection = slower bend, large deflection = faster bend
-          int16_t bendRate = joyDelta / 35;  // -10 to +10 cents per 50ms
-          
-          // Apply bend
-          currentBendCents += bendRate;
-          
-          // Clamp to ±200 cents (±2 semitones)
-          if (currentBendCents < -200) currentBendCents = -200;
-          if (currentBendCents > 200) currentBendCents = 200;
+        // Calculate how far joystick is pushed from center
+        int16_t joyDelta = 0;
+        if (joyY < joyCenter - threshold) {
+          // Pushed down - bend down
+          joyDelta = joyY - (joyCenter - threshold);  // negative value
+        } else if (joyY > joyCenter + threshold) {
+          // Pushed up - bend up
+          joyDelta = joyY - (joyCenter + threshold);   // positive value
         }
-        
-        // Convert cents to bend value (128 = center, 0 = -2 semitones, 255 = +2 semitones)
-        // 200 cents = +2 semitones = +128 from center
-        // 1 cent = 128/200 = 0.64 units
-        int16_t rawBend = PITCH_BEND_CENTER + (currentBendCents * 128 / 200);
-        if (rawBend < 0) rawBend = 0;
-        if (rawBend > 255) rawBend = 255;
-        newPitchBend = static_cast<uint8_t>(rawBend);
-        
-        // For UI display: convert cents to semitones (rounded)
-        bendSemitones = (currentBendCents + 50) / 100;  // Round to nearest semitone
-      } else {
-        // Pitch bend disabled - reset to center
-        currentBendCents = 0;
-        newPitchBend = PITCH_BEND_CENTER;
-        bendSemitones = 0;
+
+        // Scale: max deflection (~350) maps to max bend rate
+        // Small deflection = slower bend, large deflection = faster bend
+        int16_t bendRate = joyDelta / 35;  // -10 to +10 cents per 50ms
+
+        currentBendCents += bendRate;
+
+        // Clamp to ±200 cents (±2 semitones)
+        if (currentBendCents < -200) currentBendCents = -200;
+        if (currentBendCents > 200) currentBendCents = 200;
       }
 
-      // Atomic store for thread safety (ISR reads this)
-      noInterrupts();
-      pitchBendValue = newPitchBend;
-      interrupts();
+      // Convert cents to bend value (128 = center, 0 = -2 semitones, 255 = +2 semitones)
+      // 200 cents = +2 semitones = +128 from center
+      // 1 cent = 128/200 = 0.64 units
+      int16_t rawBend = PITCH_BEND_CENTER + (currentBendCents * 128 / 200);
+      if (rawBend < 0) rawBend = 0;
+      if (rawBend > 255) rawBend = 255;
+      newPitchBend = static_cast<uint8_t>(rawBend);
 
-      // Store for UI display
-      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
-      if (lock) {
-        sysState.displayPitchBend = bendSemitones;
-      }
+      // For UI display: convert cents to semitones
+      bendSemitones = (currentBendCents + 50) / 100;
+    } else {
+      // Pitch bend disabled - reset to center
+      currentBendCents = 0;
+      newPitchBend = PITCH_BEND_CENTER;
+      bendSemitones = 0;
     }
 
-    // Update global state
+    // Atomic store for thread safety
+    noInterrupts();
+    pitchBendValue = newPitchBend;
+    interrupts();
+
+    // Store for UI display
+    MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+    if (lock) {
+      sysState.displayPitchBend = bendSemitones;
+    }
+
+    // Wait 50ms
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(50));
+  }
+}
+
+// ============================================================================
+// Scan Joystick Task - 100ms interval
+// Reads joystick analog values (X/Y) for navigation
+// Priority: 1 (same as pitchBendTask, lower than scanKeysTask)
+// ============================================================================
+void scanJoystickTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = pdMS_TO_TICKS(100);  // 100ms = 10Hz
+  xLastWakeTime = xTaskGetTickCount();
+
+  for (;;) {
+    // Read joystick analog values
+    int joyX = analogRead(JOYX_PIN);
+    int joyY = analogRead(JOYY_PIN);
+
+    // Update sysState with mutex protection
     {
       MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
       if (lock) {
-        sysState.inputs = localInputs;
+        sysState.joystickX = joyX;
+        sysState.joystickY = joyY;
       }
     }
 
-    dspUpdateParams();
+    // Call navigation update with current pitch bend state
+    bool pbEnabled = false;
+    {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        pbEnabled = sysState.pitchBendEnabled;
+      }
+    }
+    navUpdate(joyX, joyY, pbEnabled);
+
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }

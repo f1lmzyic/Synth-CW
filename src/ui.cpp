@@ -128,17 +128,18 @@ void displayUpdateTask(void *pvParameters) {
   static const char *notes[] = {"C",  "C#", "D",  "D#", "E",  "F",
                                 "F#", "G",  "G#", "A",  "A#", "B"};
   static const char *pageNames[] = {"OSC", "OSC2", "FLT", "ENV", "MOD", "FX"};
+  static SystemState cachedState;
 
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
-    SystemState localState;
     {
-      MutexGuard lock(sysState.mutex);
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(10));
       if (lock) {
-        localState = sysState;
+        cachedState = sysState;
       }
     }
+    SystemState &localState = cachedState;
 
     u8g2->clearBuffer();
     u8g2->setFont(u8g2_font_5x7_tr);

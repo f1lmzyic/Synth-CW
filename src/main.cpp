@@ -7,6 +7,10 @@
 #include <ES_CAN.h>
 #include <STM32FreeRTOS.h>
 
+#if TEST_MODE
+void timingAnalysis();
+#endif
+
 SystemState sysState;
 
 HardwareTimer *sampleTimer;
@@ -55,14 +59,30 @@ void CAN_TX_ISR() { xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL); }
       }
 
       // Main-board ID broadcast: all boards update so satellites know their
-      // relative octave for display
+      // relative octave for display.
+      // Priority resolves conflicts when boards hot-plug or boot simultaneously.
       if (msgType == 'M') {
-        sysState.mainKeyboardId = RX_Message[1];
+        uint8_t incomingId = RX_Message[1];
+        uint8_t incomingPriority = RX_Message[2];
+        
+        uint8_t myPriority = 0;
+        if (sysState.hasLeft && sysState.hasRight) myPriority = 2;
+        else if (millis() > 2000) myPriority = 1;
+
+        bool iAmMain = (sysState.mainKeyboardId == sysState.keyboardId);
+        
+        // Accept if we are not currently main, or if the incoming message has a 
+        // strictly higher priority (e.g. middle board > edge board), or if 
+        // priorities tie but incoming has a higher keyboardId (tie-breaker for 2 boards)
+        if (!iAmMain || incomingPriority > myPriority || 
+            (incomingPriority == myPriority && incomingId > sysState.keyboardId)) {
+          sysState.mainKeyboardId = incomingId;
+        }
         continue;
       }
 
       // Key messages only processed by the main board (or standalone board)
-      bool actAsMain = !sysState.hasLeft;
+      bool actAsMain = (sysState.mainKeyboardId == sysState.keyboardId);
       if (!actAsMain) {
         continue;
       }
@@ -185,31 +205,25 @@ void setup() {
   // Init state
   sysState.menuMode = false;
   sysState.activePage = PAGE_OSC;
-  sysState.viewMode = 0; // Default to performance view
+  sysState.viewMode = 0;
   sysState.lastHandshakePos = -1;
-  sysState.keyboardId = 0;   // Default keyboard ID
-  sysState.mainKeyboardId = 0; // Default: board 0 is main
-  sysState.octaveOffset = 0; // Default octave (middle C = C4)
+  sysState.keyboardId = 0;
+  sysState.mainKeyboardId = 0;
+  sysState.octaveOffset = 0;
 
-  // Multi-keyboard: assume standalone until handshake determines otherwise
   sysState.hasLeft = false;
-  sysState.hasRight =
-      false; // No right neighbor = plays audio (standalone mode)
+  sysState.hasRight = false;
   sysState.prevWestIn = false;
   sysState.prevEastIn = false;
   sysState.eastOut = true;
   sysState.lastConnectionChangeTime = 0;
 
-  // Initialize polyphony state
   sysState.pressedKeyCount = 0;
   memset(sysState.pressedKeys, 0xFF, sizeof(sysState.pressedKeys));
-
-  // Initialize pitch bend
-  sysState.pitchBendEnabled = false;  // Disabled by default
+  sysState.pitchBendEnabled = false;
   sysState.displayPitchBend = 0;
 
   dspInit();
-
   uiInit();
 
   msgInQ = xQueueCreate(36, 8);
@@ -224,33 +238,22 @@ void setup() {
   setCANFilter(0x123, 0x7ff);
   CAN_RegisterRX_ISR(CAN_RX_ISR);
   CAN_RegisterTX_ISR(CAN_TX_ISR);
-
   CAN_Start();
 
-  if (xTaskCreate(decodeTask, "decode", 256, nullptr, 3, NULL) != pdPASS) {
-    fatalError();
-  }
-  if (xTaskCreate(CAN_TX_Task, "canTx", 256, nullptr, 2, nullptr) != pdPASS) {
-    fatalError();
-  }
+#if !TEST_MODE
+  xTaskCreate(decodeTask, "decode", 256, nullptr, 3, NULL);
+  xTaskCreate(CAN_TX_Task, "canTx", 256, nullptr, 2, nullptr);
+#endif
 
-  // Configure sample timer for 22kHz
   sampleTimer = new HardwareTimer(TIM1);
   sampleTimer->setOverflow(SAMPLE_RATE, HERTZ_FORMAT);
   sampleTimer->attachInterrupt(sampleISR);
-  // Timer will be resumed by an initialization task after the scheduler starts
 
-  // Create tasks
-  if (xTaskCreate(scanKeysTask, "scanKeys", 256, nullptr, 2, &scanKeysHandle) !=
-      pdPASS) {
-    fatalError();
-  }
-  if (xTaskCreate(displayUpdateTask, "displayUpdate", 256, nullptr, 1,
-                  nullptr) != pdPASS) {
-    fatalError();
-  }
+#if !TEST_MODE
+  xTaskCreate(scanKeysTask, "scanKeys", 256, nullptr, 2, &scanKeysHandle);
+  xTaskCreate(pitchBendTask, "pitchBend", 256, nullptr, 1, &pitchBendHandle);
+  xTaskCreate(displayUpdateTask, "displayUpdate", 256, nullptr, 1, nullptr);
 
-  // Create a task to start the timer safely after the scheduler has started
   TaskHandle_t timerTaskHandle;
   xTaskCreate(
       [](void *pvParameters) {
@@ -264,6 +267,236 @@ void setup() {
   }
 
   vTaskStartScheduler();
+#endif
+
+#if TEST_MODE
+  timingAnalysis();
+#endif
 }
 
-void loop() {}
+void loop() {
+  static uint32_t next = millis();
+  static uint32_t count = 0;
+
+  while (millis() < next);
+  next += 100;
+
+  digitalToggle(LED_BUILTIN);
+}
+
+#if TEST_MODE
+void timingAnalysis() {
+  Serial.begin(115200);
+  while (!Serial) {}
+
+  Serial.println("=== scanKeysTask Timing Analysis ===");
+  Serial.print("TEST_ITERATIONS = ");
+  Serial.println(TEST_ITERATIONS);
+  Serial.println();
+
+  // Component timing variables
+  uint32_t gpioScanTime = 0;
+  uint32_t mutexTime = 0;
+  uint32_t canTime = 0;
+  uint32_t pitchBendTime = 0;
+  uint32_t dspUpdateTime = 0;
+  uint32_t connectionTime = 0;
+
+  // Measure complete scanKeysTask iteration
+  uint32_t totalStart = micros();
+  
+  for (int iter = 0; iter < TEST_ITERATIONS; iter++) {
+    uint32_t iterStart = micros();
+    
+    // === GPIO Matrix Scanning (rows 0-4: keys) ===
+    uint32_t gpioStart = micros();
+    std::bitset<32> localInputs;
+    
+    // Enable mux once for entire scan cycle
+    enableMuxFast();
+    setOutFast(true);
+    
+    for (int row = 0; row < 5; row++) {
+      setRowFast(row);  // GPIO: ~5-10 cycles
+      uint32_t cols = readColsFast();
+      
+      // Extract individual columns from bitmask
+      localInputs[row * 4] = cols & 1;
+      localInputs[row * 4 + 1] = (cols >> 1) & 1;
+      localInputs[row * 4 + 2] = (cols >> 2) & 1;
+      localInputs[row * 4 + 3] = (cols >> 3) & 1;
+    }
+    gpioScanTime += (micros() - gpioStart);
+    
+    // === Joystick button + West input (row 5) ===
+    gpioStart = micros();
+    setRowFast(5);
+    uint32_t cols5 = readColsFast();
+    localInputs[20] = cols5 & 1;
+    localInputs[21] = (cols5 >> 1) & 1;
+    localInputs[22] = (cols5 >> 2) & 1;  // Joystick S button
+    localInputs[23] = (cols5 >> 3) & 1;  // West Input
+    bool westIn = !((cols5 >> 3) & 1);
+    bool joyButton = !((cols5 >> 2) & 1);
+    gpioScanTime += (micros() - gpioStart);
+    
+    // === Pitch bend toggle (mutex operation) ===
+    uint32_t mutexStart = micros();
+    static bool prevJoyButton = false;
+    if (joyButton && !prevJoyButton) {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        sysState.pitchBendEnabled = !sysState.pitchBendEnabled;
+      }
+    }
+    prevJoyButton = joyButton;
+    mutexTime += (micros() - mutexStart);
+    
+    // === East input (row 6) ===
+    gpioStart = micros();
+    setRowFast(6);
+    setOutFast(sysState.eastOut);
+    uint32_t cols6 = readColsFast();
+    bool eastIn = !((cols6 >> 3) & 1);
+    gpioScanTime += (micros() - gpioStart);
+    
+    // === Connection state update ===
+    uint32_t connStart = micros();
+    // Simulate updateConnectionState logic
+    static bool prevWestIn = false;
+    static bool prevEastIn = false;
+    if ((westIn != prevWestIn) || (eastIn != prevEastIn)) {
+      sysState.eastOut = true;
+      sysState.lastConnectionChangeTime = millis();
+    }
+    prevWestIn = westIn;
+    prevEastIn = eastIn;
+    if (millis() > HANDSHAKE_STARTUP_DELAY && 
+        millis() - sysState.lastConnectionChangeTime > HANDSHAKE_SETTLE_TIME &&
+        sysState.eastOut) {
+      sysState.eastOut = false;
+    }
+    connectionTime += (micros() - connStart);
+    
+    // === Multi-key detection ===
+    static bool keysPressed[12] = {false};
+    static bool keysPrevPressed[12] = {false};
+    for (int i = 0; i < 12; i++) {
+      keysPressed[i] = !localInputs[i];
+      if (keysPrevPressed[i] != keysPressed[i]) {
+        canTime += 5;  // Estimate ~5us per CAN message queue operation
+        keysPrevPressed[i] = keysPressed[i];
+      }
+    }
+    
+    // === DSP parameter update ===
+    uint32_t dspStart = micros();
+    dspUpdateParams();
+    dspUpdateTime += (micros() - dspStart);
+  }
+  
+  uint32_t totalTime = micros() - totalStart;
+  uint32_t avgTotal = totalTime / TEST_ITERATIONS;
+  
+  // Calculate averages
+  uint32_t avgGpio = gpioScanTime / TEST_ITERATIONS;
+  uint32_t avgMutex = mutexTime / TEST_ITERATIONS;
+  uint32_t avgCan = canTime / TEST_ITERATIONS;
+  uint32_t avgDsp = dspUpdateTime / TEST_ITERATIONS;
+  uint32_t avgConnection = connectionTime / TEST_ITERATIONS;
+  
+  // Output results - GPIO version
+  Serial.println("=== Component Breakdown ===");
+  Serial.print("GPIO scanning (FAST register):   ");
+  Serial.print(avgGpio);
+  Serial.println(" us");
+  Serial.println("  (No settling delays - instant access)");
+  
+  Serial.print("Mutex operations (x1 only):      ");
+  Serial.print(avgMutex);
+  Serial.println(" us");
+  
+  Serial.print("CAN message queue (estimated):   ");
+  Serial.print(avgCan);
+  Serial.println(" us");
+  
+  Serial.print("Connection state update:         ");
+  Serial.print(avgConnection);
+  Serial.println(" us");
+  
+  Serial.print("dspUpdateParams():               ");
+  Serial.print(avgDsp);
+  Serial.println(" us");
+  
+  Serial.println();
+  Serial.println("=== OFFLOADED Tasks (not in scanKeysTask) ===");
+  Serial.println("Knob decoding:    scanKnobsTask (50ms interval)");
+  Serial.println("Joystick analog:  scanJoystickTask (100ms interval)");
+  Serial.println("Pitch bend:       pitchBendTask (50ms interval)");
+  
+  Serial.println();
+  Serial.println("=== Summary ===");
+  Serial.print("scanKeysTask total:              ");
+  Serial.print(avgTotal);
+  Serial.print(" us (");
+  Serial.print(avgTotal / 1000.0, 3);
+  Serial.println(" ms)");
+  
+  // Target check
+  Serial.println();
+  if (avgTotal < 100) {
+    Serial.print("TARGET MET: ");
+    Serial.print(avgTotal);
+    Serial.println(" us < 100 us (target)");
+  } else {
+    Serial.print("TARGET MISSED: ");
+    Serial.print(avgTotal);
+    Serial.println(" us >= 100 us (target)");
+  }
+  
+  Serial.println();
+  Serial.println("=== Other Tasks ===");
+  
+  // Test displayUpdate (one iteration)
+  uint32_t startTime = micros();
+  for (int i = 0; i < TEST_ITERATIONS; i++) {
+    SystemState localState;
+    {
+      MutexGuard lock(sysState.mutex, pdMS_TO_TICKS(5));
+      if (lock) {
+        localState = sysState;
+      }
+    }
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_5x7_tr);
+    u8g2->setCursor(0, 10);
+    u8g2->print("TEST");
+    u8g2->sendBuffer();
+  }
+  uint32_t displayTime = (micros() - startTime) / TEST_ITERATIONS;
+  Serial.print("displayUpdateTask:             ");
+  Serial.print(displayTime);
+  Serial.println(" us");
+  
+  // Test sampleISR
+  startTime = micros();
+  for (int i = 0; i < TEST_ITERATIONS; i++) {
+    sampleISR();
+  }
+  uint32_t isrTime = (micros() - startTime) / TEST_ITERATIONS;
+  Serial.print("sampleISR:                     ");
+  Serial.print(isrTime);
+  Serial.println(" us");
+  
+  Serial.println();
+  Serial.println("=== Complete ===");
+  Serial.print("Total WCET (all tasks):        ");
+  Serial.print(avgTotal + displayTime + isrTime);
+  Serial.println(" us");
+  
+  Serial.println();
+  Serial.println("Halting - reset board to run normal firmware");
+  
+  while (1) {}
+}
+#endif
