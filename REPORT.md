@@ -24,9 +24,9 @@ Real-time STM32 synthesizer with polyphony, live control, OLED UI, and CAN-based
 
 ## Overview
 
-This project implements a real-time embedded music synthesizer on STM32. The system combines polyphonic sound generation, live parameter control, OLED feedback, and CAN communication between connected boards.
+This project implements a real-time music synthesizer on an STM32 platform. The system handles note input, audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
 
-Rather than using a single main loop, the synthesizer is split into RTOS tasks and hardware interrupts. This keeps audio generation separate from display, control, and communication logic.
+The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive.
 
 ---
 ## Demo Video
@@ -73,7 +73,7 @@ The video below demonstrates the functionality of our board. It covers the basic
 
 ## Task Characterization
 
-This section outlines each task in terms of its theoretical minimum initiation interval and Worst Case Execution Time & CPU Utilization.
+This section gives the minimum initiation interval for each task and ISR, together with the measured WCET and the resulting CPU utilisation.
 
 ### 2.1 Minimum Initiation Intervals
 
@@ -137,9 +137,9 @@ Using the measured WCET values, the total processor demand in this worst-case si
 
 ## Deadlock Analysis
 
-Looking through the task interactions, there is no obvious deadlock path in the current design. Most shared data goes through one mutex, `sysState.mutex`, instead of several nested locks, which keeps things simpler.
+No deadlock path was found in the current design. The main shared state is protected by one mutex, `sysState.mutex`, rather than a chain of nested locks. This matters because deadlock usually needs a circular wait between multiple held resources.
 
-The CAN parts use queues and a semaphore to pass data between interrupts and tasks. Since the interrupt handlers do not try to take the mutex, and the tasks are not holding one lock while waiting on another, a circular wait does not appear in the code. The more realistic issue here is short blocking time, not deadlock.
+The CAN path does not create that pattern. `CAN_RX_ISR` and `CAN_TX_ISR` do not take the mutex. Instead, they only post to the queue or semaphore using the ISR-safe FreeRTOS calls. `decodeTask` may use the shared state mutex while updating system state, but it does not wait on another lock at the same time. `CAN_TX_Task` waits for queue data and mailbox availability, but it does not hold `sysState.mutex` while doing so. Because of this, the design may experience short blocking, but not a true deadlock cycle.
 
 
 ---
