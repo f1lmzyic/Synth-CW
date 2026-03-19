@@ -115,10 +115,9 @@ Total CPU utilisation = 68.23%
 ---
 ## Critical Instant Analysis
 
-Under rate monotonic scheduling, the worst case occurs when all periodic activities and any relevant event-driven work are released together. In this system, the interrupt handlers execute above the task level, so `sampleISR` always pre-empts the threads when required. Among the tasks, `decodeTask` has the highest priority, followed by `scanKeysTask` and `CAN_TX_Task`, while `displayUpdateTask` has the lowest priority.
+Under rate monotonic scheduling, the worst case happens when all periodic tasks and any related event-driven activities are released at the same time. In this system, the interrupt handlers run above the task level, so `sampleISR` always pre-empts the threads when needed. Among the tasks, `decodeTask` has the highest priority, followed by `scanKeysTask` and `CAN_TX_Task`, while `displayUpdateTask` has the lowest priority.
 
-Using the measured WCET values, the processor demand remains below the available CPU time in the worst-case release pattern. The most timing-critical activity is `sampleISR`, since it must complete within 45.45 us, and its measured WCET remains below this bound. The remaining tasks execute less frequently and also complete within their own minimum initiation intervals, even after accounting for interference from higher-priority work. Based on these timings, all deadlines are met under the critical instant assumption.
-
+Using the measured WCET values, the total processor demand in this worst-case situation still stays within the available CPU time. The most timing-sensitive part is `sampleISR`, because it has to finish within `45.45 us`, and the measured WCET is still below that limit. The other tasks run less often and also finish within their own minimum initiation intervals, even when interference from higher-priority work is included. From these results, all deadlines are still met under the critical instant assumption.
 ---
 
 
