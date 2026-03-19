@@ -97,22 +97,22 @@ Total CPU utilisation = 68.23%
 
 ## Shared Data Structures and Synchronisation
 
-All shared resources are protected using a small set of synchronisation methods: a mutex for shared system state, FreeRTOS queues for CAN message passing, a counting semaphore for CAN transmit mailbox control, and atomic access for time-critical audio values.
+Shared resources are protected with mutexes, queues, semaphores, and atomic access.
 
 - **`sysState`**  
-  Shared system state used by multiple tasks for keyboard state, board state, UI state, and synth parameters. Protected by `sysState.mutex`, with task-level access wrapped through `MutexGuard`.
+  Stores the main shared system state and is protected by `sysState.mutex`.
 
 - **`msgInQ`**  
-  Queue used to transfer received CAN frames from `CAN_RX_ISR` to `decodeTask`. This avoids direct shared-buffer access between ISR and thread context.
+  Holds incoming CAN messages for `decodeTask`.
 
 - **`msgOutQ`**  
-  Queue used to pass outgoing CAN frames from task-level code to `CAN_TX_Task` for transmission.
+  Holds outgoing CAN messages for `CAN_TX_Task`.
 
 - **`CAN_TX_Semaphore`**  
-  Counting semaphore used to track free CAN transmit mailboxes. Released by `CAN_TX_ISR` and taken by `CAN_TX_Task` before sending a frame.
+  Used to control access to CAN transmit mailboxes.
 
 - **`pitchBendValue`**  
-  Shared pitch-bend value used in the audio path. Kept separate from the main mutex-protected state and updated using atomic access to avoid unnecessary blocking in time-critical processing.
+  Shared pitch bend value used by the audio engine.
 
 
 ---
