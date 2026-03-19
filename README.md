@@ -24,10 +24,7 @@ Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-boar
 
 ## Overview
 
-This project implements a real-time 4-voice polyphonic music synthesizer on an STM32L432KC platform using FreeRTOS. The system handles note input, 22 kHz 8-bit PWM audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
-
-The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive. The synthesiser can be configured during compilation to act as a sender or receiver module, allowing up to 3 keyboards to be stacked via CAN bus.
-
+We implement a polyphonic music synthesizer. The system handles multiple note input, using a 22 kHz PWM audio generation. It also features hot swappable connecting other keyboards and communication via the CAN bus.
 
 ---
 
@@ -71,7 +68,7 @@ This section gives the minimum initiation interval for each task and ISR, togeth
 
 ### 2.2 Worst Case Execution Time / CPU Utilization
 
-The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval. *(Note: The `sampleISR` timing includes all processing from LFO through to PWM output. CAN ISRs are short and event-driven, with negligible CPU impact.)*
+The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval.
 
 | Task / ISR          | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
 |---------------------|----------:|----------------------------:|--------------------:|
@@ -84,34 +81,15 @@ The WCET values were measured separately by enabling the corresponding profiling
 
 **Total CPU utilisation ≈ 90.60%**
 
-*Note: The audio ISR (`sampleISR`) accounts for ~73% of CPU time. The ISR completes within its deadline (33 us < 45 us), leaving ~12 us slack per sample period. The background tasks consume ~17% combined and complete well within their longer periods.*
-
 ---
 
 ## CPU Utilisation
 
-CPU utilisation percentages are shown in the Task Characterization table above. The audio ISR (`sampleISR`) accounts for ~73% of CPU time, with background tasks consuming ~17% combined. The total utilization of ~91% leaves sufficient headroom for the system to remain schedulable. The ISR always completes before the next sample deadline (33 us < 45 us), and the remaining tasks have much longer periods allowing them to execute in the gaps between ISR invocations.
+CPU utilisation percentages are shown in the Task Characterization table above. The audio ISR (`sampleISR`) accounts for ~89% of CPU time, with background tasks consuming ~17% combined. The system remains schedulable because the ISR always completes before the next sample deadline, and the remaining tasks have much longer periods allowing them to execute in the gaps between ISR invocations.
 
 ---
 
-## Critical Instant Analysis
-
-Under rate monotonic scheduling (RMS), priorities are assigned inversely to period: shorter period = higher priority. The critical instant occurs when all tasks are released simultaneously, creating maximum interference.
-
-### Priority Assignment (Rate Monotonic)
-
-| Priority | Task / ISR | Period (T) | WCET (C) |
-|:--------:|------------|------------|----------|
-| Highest  | `sampleISR` | 45 us | 33 us |
-| 1        | `scanKeysTask` | 20 ms | 156 us |
-| 2        | `pitchBendTask` | 50 ms | 11 us |
-| 3        | `decodeTask` | 25.2 ms (event) | 11 us |
-| 4        | `CAN_TX_Task` | 60 ms (event) | 4 us |
-| Lowest   | `displayUpdateTask` | 100 ms | 16416 us |
-
-### Response Time Analysis
-
-For each task, the worst-case response time R must satisfy R ≤ T (deadline = period).
+## Response Time Analysis
 
 **sampleISR (Timer Interrupt):**
 - Runs at hardware interrupt level, pre-empts all tasks
@@ -156,34 +134,6 @@ All deadlines are met under worst-case conditions. The audio ISR completes well 
 ## Deadlock Analysis
 
 Deadlock requires four conditions: mutual exclusion, hold-and-wait, no preemption, and circular wait. This analysis examines inter-task blocking dependencies.
-
-### Resource Dependency Graph
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   CAN_RX_ISR    │────>│     msgInQ      │<────│   decodeTask    │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-┌─────────────────┐     ┌─────────────────┐              │
-│   CAN_TX_ISR    │────>│CAN_TX_Semaphore │<────┐        │
-└─────────────────┘     └─────────────────┘     │        │
-                                                │        ▼
-┌─────────────────┐     ┌─────────────────┐     │  ┌─────────────────┐
-│  scanKeysTask   │────>│     msgOutQ     │<────┼──│  CAN_TX_Task    │
-└────────┬────────┘     └─────────────────┘     │  └─────────────────┘
-         │                                      │
-         │              ┌─────────────────┐     │
-         └─────────────>│  sysState.mutex │<────┴──────────┐
-                        └─────────────────┘                │
-                              ▲     ▲                      │
-         ┌────────────────────┘     └──────────────┐       │
-         │                                         │       │
-┌────────┴────────┐                        ┌───────┴───────┴───────┐
-│ pitchBendTask   │                        │  displayUpdateTask    │
-└─────────────────┘                        └───────────────────────┘
-```
-
-### Analysis by Deadlock Condition
 
 **1. Mutual Exclusion:** Present - `sysState.mutex` provides exclusive access.
 
@@ -252,9 +202,7 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 - Performance view (shows the note being played, volume level, waveform preview, and octave)
 - Oscilloscope view (real-time animated waveform display with key and pitch bend status)
 - Envelope visualization (displayed within the ENV parameter page)
-
-### Parameter Pages
-
+- OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
 - PERF page (Performance: waveform preview, octave control, volume)
 - OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
 - OSC2 page (Sub-oscillator, noise, ring modulation, wavefolder)
@@ -266,8 +214,6 @@ The user interface uses a multi-page menu rather than a single flat screen. A sh
 ---
 
 ## Advanced Features
-
-This section highlights the key differentiating features that go beyond the basic requirements.
 
 | Feature | Description |
 |---|---|
