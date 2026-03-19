@@ -8,7 +8,7 @@
 // Statistics only (for graph plotting): #define STAT_ONLY 1
 // Number of iterations: TEST_ITERATIONS (defined in platformio.ini or fallback default)
 
-#define TEST_MODE 0  // DISABLED - set to 1 for timing analysis
+#define TEST_MODE 1  // DISABLED - set to 1 for timing analysis
 #define STAT_ONLY 0
 #ifndef TEST_ITERATIONS
 #define TEST_ITERATIONS 32  // Fallback default if not defined in platformio.ini

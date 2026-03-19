@@ -1,102 +1,177 @@
-# ES Monosynth Pro
+# Embedded Music Synthesizer
 
-This project transforms a basic STM32L432KC + FreeRTOS synthesizer skeleton into a feature-rich, dual-oscillator subtractive Monosynth. The architecture is modularized into discrete embedded subsystems (Hardware, DSP, UI) to provide professional-grade sound and stability.
+Real-time STM32 synthesizer with live control, OLED UI, and CAN-based multi-board support.
 
-## Features
+---
 
-Inspired by classic analog and digital synthesizers like the Moog Ladder, Korg MS-20, Roland SH-101, and ARP Odyssey, the DSP engine features:
+## Table of Contents
 
-### 1. Sound Generation (Oscillators & Noise)
-*   **Dual Primary VCOs**:
-    *   **OSC 1**: Features continuous **Waveform Morphing** (Sawtooth → Square → Triangle → Sine).
-    *   **OSC 2**: Standard waveforms with adjustable **Detune** (-50 to +50 cents), **Octave Shift** (-2 to +2), and **Hard Sync** (OSC 1 phase resets OSC 2).
-*   **Sub-Oscillator (SH-101 Style)**: A dedicated square wave that is permanently pitched exactly one octave below OSC 1. Adds massive bottom-end bass without tying up OSC 2.
-*   **Noise Generator (White/Pink)**: Powered by a highly efficient 32-bit Linear Feedback Shift Register (LFSR). Essential for synthesizing percussive hits, wind, and lo-fi textures.
-*   **Ring Modulation (AM)**: Multiplies the output of OSC 1 and OSC 2 to create complex, inharmonic, and bell-like metallic tones.
+- [Overview](#overview)
+- [Task Identification](#task-identification)
+- [Task Characterization](#task-characterization)
+  - [2.1 Minimum Initiation Intervals](#21-minimum-initiation-intervals)
+  - [2.2 Worst Case Execution Time / CPU Utilization](#22-worst-case-execution-time--cpu-utilization)
+- [CPU Utilisation](#cpu-utilisation)
+- [Critical Instant Analysis](#critical-instant-analysis)
+- [Shared Data Structures and Synchronisation](#shared-data-structures-and-synchronisation)
+- [Deadlock Analysis](#deadlock-analysis)
+- [Audio Pipeline](#audio-pipeline)
+- [Controls and UI](#controls-and-ui)
+  - [Display Pages](#display-pages)
+- [Advanced Features](#advanced-features)
 
-### 2. Sound Shaping (Filters, Drive, & Wavefolding)
-*   **Three Distinct Filter Models**:
-    *   **Standard SVF**: A clean, digital State-Variable Filter.
-    *   **Moog Ladder Approximation (4-Pole LP)**: Features warm, non-linear feedback and soft clipping at the filter input for that signature classic "Moog" character.
-    *   **MS-20 Sallen-Key Approximation**: Aggressive, screaming resonance with asymmetric clipping in the feedback path, perfect for acid basslines and gritty leads.
-*   **Filter Types**: Selectable Low-Pass (LP), High-Pass (HP), Band-Pass (BP), and Notch.
-*   **Pre-Filter Overdrive/Saturation**: A dedicated soft-clipping drive stage applied right before the filter block to harmonic saturation.
-*   **Digital Wavefolding (Buchla/MicroFreak Style)**: Instead of clipping, loud signals fold backward upon themselves. Creates chaotic, bright, FM-like timbres when pushed hard.
+---
 
-### 3. Modulation & Envelopes
-*   **Main VCA Envelope (ADSR)**: The primary Attack-Decay-Sustain-Release envelope tied to the final volume amplifier.
-*   **Secondary Modulation Envelope (AD)**: A completely separate Attack-Decay envelope that can be routed with bipolar amounts (-64 to +64) to Global Pitch, Filter Cutoff, or OSC 2 Pitch.
-*   **Multi-Wave LFO**: Global Low-Frequency Oscillator assignable to Pitch, Filter, or PWM.
-*   **Sample & Hold (ARP 2600 Style)**: Samples the LFSR Noise Generator exactly at the start of every LFO cycle, creating classic stepped, randomized modulation. S&H output can be routed to Pitch or Filter Cutoff.
-*   **Glide (Portamento)**: Slew limiter for sliding pitch between notes.
+## Overview
 
-### 4. Digital Effects (FX)
-*   **Digital Delay (Echo)**: An 8192-sample delay line with adjustable Time, Feedback, and Mix.
-*   **Chorus / Ensemble (Juno-60 Style)**: A bucket-brigade style delay line (2048 samples) driven by a dedicated internal sine-wave LFO to thicken mono signals into wide stereo-like pads.
-*   **Decimator (Sample Rate Reduction)**: Artificially drops the sample rate by holding the DSP output over several cycles, introducing aliasing and digital "ring".
-*   **Bitcrusher**: Destructively shifts the 8-bit output down to as low as 1-bit resolution for extreme lo-fi crunch and digital distortion.
+This project implements a real-time music synthesizer on an STM32 platform. The system handles note input, audio generation, OLED updates, and CAN communication using a mix of interrupts and FreeRTOS tasks.
 
-## Enhanced Display Modes
-Long-press the joystick (1 second) to cycle through view modes:
+The design separates time-critical audio work from slower interface and communication tasks. This makes the system easier to analyse and helps keep the audio path responsive.
 
-*   **Performance View (PERF)**: Original view with note display, volume, and waveform visualization
-*   **Oscilloscope View (SCOPE)**: Real-time waveform display with animated scope
-*   **Envelope View (ENV)**: Visual ADSR envelope shape with parameter values
+---
 
-## User Interface & Navigation
+## Demo Video
 
-The flat interface has been upgraded to a hierarchical, multi-page menu system navigated via the Joystick and Rotary Knob:
+<!-- Add demo video here -->
 
-1.  **Short Press the Joystick**: Toggle between **Performance Mode** and **Menu Mode**
-2.  **Long Press the Joystick** (1 sec): Cycle through view modes (PERF → SCOPE → ENV)
-3.  **Move the Joystick Left/Right**: Switch between parameter pages.
-4.  **Move the Joystick Up/Down**: Highlight a specific parameter on the active page
-5.  **Turn the Rotary Knob**: Change the value of the highlighted parameter
+---
 
-### UI Menu Map
-Navigate using the Joystick (L/R) and edit with the four rotary knobs:
-*   `OSC`: Osc 1 Morph | Osc 2 Wave | Mix | Osc 2 Detune
-*   `OSC2`: Sub Osc Mix | Noise Mix | Ring Mod Mix | Wavefolder
-*   `FLT`: Cutoff | Resonance | Env Depth | Type (LP/HP/BP/Notch)
-*   `MODEL`: Model (STD/MOOG/MS20) | Drive Level
-*   `ENV`: Attack | Decay | Sustain | Release
-*   `MOD`: LFO Rate | LFO Depth | *Empty* | Glide Time
-*   `MENV`: Mod Env A | Mod Env D | Amount (+/-) | Target (Ptch/Flt/Osc2)
-*   `S&H`: S&H Depth | S&H Target | *Empty* | *Empty*
-*   `FX`: Delay Time | Delay Fbk | Delay Mix | Hard Sync Toggle
-*   `CHO`: Chorus Rate | Chorus Depth | Chorus Mix | Bitcrusher Lvl
+## Task Identification
 
-## System Architecture
+| Task / ISR | Type | FreeRTOS Priority | Trigger | Purpose |
+|---|---|---:|---|---|
+| `sampleISR` | Timer interrupt | - | 22 kHz hardware timer | Audio generation: modulation, voice mix, filter/effects, output write |
+| `scanKeysTask` | Thread | 2 | Periodic (20 ms) | Key scan, joystick read, knob decode, local control update |
+| `decodeTask` | Thread | 3 | Event-driven (`msgInQ`) | Decode CAN messages, update board/key state |
+| `CAN_TX_Task` | Thread | 2 | Event-driven (`msgOutQ` + `CAN_TX_Semaphore`) | Transmit queued CAN frames |
+| `displayUpdateTask` | Thread | 1 | Periodic (100 ms) | Refresh OLED menu and performance views |
+| `CAN_RX_ISR` | Hardware interrupt | - | Event-driven | Push received CAN frame into `msgInQ` |
+| `CAN_TX_ISR` | Hardware interrupt | - | Event-driven | Release TX mailbox via `CAN_TX_Semaphore` |
 
-The monolithic codebase has been restructured into a scalable C++ project:
+---
 
-*   **`src/main.cpp`**: Orchestrates FreeRTOS tasks and system initialization.
-*   **`include/hw.h` / `src/hw.cpp`**: Hardware abstraction layer. Handles keyboard matrix scanning, joystick analog reads, and rotary encoder state machines within the 20ms `scanKeysTask`.
-*   **`include/ui.h` / `src/ui.cpp` / `src/ui_helpers.cpp`**: Manages the OLED display drawing via U8g2 and processes rotary knob rotations to update the correct DSP parameters. Runs in the 100ms `displayUpdateTask`. Uses `ui_helpers.cpp` and `sine_lut.h` for waveform visualization.
-*   **`include/dsp.h` / `src/dsp.cpp`**: The core sound engine. Runs entirely within the 22kHz `AudioISR` timer interrupt. Uses lock-free parameter buffering to ensure no audio dropouts occur while navigating the menu.
-*   **`include/globals.h` / `include/constants.h`**: Defines the shared `sysState` structures, hardware pins, and concurrency primitives (Mutexes) used for IPC between tasks.
+## Task Characterization
 
-## Building and Flashing
+This section gives the minimum initiation interval for each task and ISR, together with the measured WCET and the resulting CPU utilisation.
 
-This project is built using PlatformIO. To compile and upload to the Nucleo board:
+### 2.1 Minimum Initiation Intervals
 
-```bash
-pio run -t upload
-```
+| Task / ISR | Minimum initiation interval | Assumptions used |
+|---|---:|---|
+| `sampleISR` | **45.45 us** | Timer interrupt configured at 22 kHz. |
+| `scanKeysTask` | **20 ms** | Periodic task using `vTaskDelayUntil()` with a 20 ms period. |
+| `displayUpdateTask` | **100 ms** | Periodic task using `vTaskDelayUntil()` with a 100 ms period. |
+| `CAN_RX_ISR` | **0.7 ms** | Worst-case CAN traffic assumption: minimum CAN frame transmission interval taken as 0.7 ms. |
+| `CAN_TX_ISR` | **0.7 ms** | One TX completion interrupt is produced per transmitted CAN frame, so the same minimum inter-arrival time is used. |
+| `decodeTask` | **25.2 ms** | `msgInQ` length is 36. Under worst-case CAN traffic, the queue can fill in (36 × 0.7 = 25.2) ms. |
+| `CAN_TX_Task` | **60 ms** | `scanKeysTask` runs every 20 ms and can generate up to 12 outgoing messages each cycle, so a 36-item `msgOutQ` can fill in 60 ms. |
 
-Ensure the correct `lib_deps` are installed via `platformio.ini`:
-*   `olikraus/U8g2`
-*   `stm32duino/STM32duino FreeRTOS`
+### 2.2 Worst Case Execution Time / CPU Utilization
 
-## Hardware Specifications
+The WCET values were measured separately by enabling the corresponding profiling `#define` one at a time. After collecting the timing result, CPU utilisation was calculated from the measured WCET and the minimum initiation interval.
 
-- **MCU**: STM32L432KC (ARM Cortex-M4)
-- **Display**: SSD1305 128x32 OLED
-- **Audio**: 22kHz sample rate, 8-bit resolution (PWM)
-- **Key Matrix**: 3 rows x 4 columns (scanned)
-- **Knobs**: Quadrature encoders via matrix
-- **Joystick**: Analog X/Y and digital push button
+| Task / ISR | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
+|---|---:|---:|---:|
+| `sampleISR` | 22 | 45.45 us | 48.40 |
+| `scanKeysTask` | 282 | 20000 us | 1.41 |
+| `displayUpdateTask` | 16040 | 100000 us | 16.04 |
+| `CAN_RX_ISR` | 3 | 700 us | 0.43 |
+| `CAN_TX_ISR` | 1 | 700 us | 0.14 |
+| `decodeTask` | 11 | 36 exec / 25.2 ms | 1.57 |
+| `CAN_TX_Task` | 4 | 36 exec / 60 ms | 0.24 |
 
-## License
+Total CPU utilisation = 68.23%
 
-This project is an advanced extension of the Embedded Systems coursework synthesizer.
+---
+
+## CPU Utilisation
+
+CPU utilisation percentages are shown in the Task Characterization table above. Total utilisation is approximately 68%.
+
+---
+
+## Critical Instant Analysis
+
+Under rate monotonic scheduling, the worst case happens when all periodic tasks and any related event-driven activities are released at the same time. In this system, the interrupt handlers run above the task level, so `sampleISR` always pre-empts the threads when needed. Among the tasks, `decodeTask` has the highest priority, followed by `scanKeysTask` and `CAN_TX_Task`, while `displayUpdateTask` has the lowest priority.
+
+Using the measured WCET values, the total processor demand in this worst-case situation still stays within the available CPU time. The most timing-sensitive part is `sampleISR`, because it has to finish within 45.45 us, and the measured WCET is still below that limit. The other tasks run less often and also finish within their own minimum initiation intervals, even when interference from higher-priority work is included. From these results, all deadlines are still met under the critical instant assumption.
+
+---
+
+## Shared Data Structures and Synchronisation
+
+| Shared resource | Accessed by | Protection method | Reason |
+|---|---|---|---|
+| `sysState` | UI tasks, audio/control logic, CAN decode path | `sysState.mutex` | Prevents inconsistent updates to shared synthesizer state |
+| `msgInQ` | `CAN_RX_ISR`, `decodeTask` | FreeRTOS queue | Safely transfers received CAN frames from ISR to task context |
+| `msgOutQ` | producer tasks, `CAN_TX_Task` | FreeRTOS queue | Decouples message generation from CAN transmission |
+| `CAN_TX_Semaphore` | `CAN_TX_Task`, `CAN_TX_ISR` | Binary/counting semaphore | Synchronises task-level transmission with mailbox availability |
+| `pitchBendValue` | input/control path, audio path | atomic/simple shared update | Small shared control value used without multi-step state changes |
+
+---
+
+## Deadlock Analysis
+
+No deadlock path was found in the current design. The main shared state is protected by one mutex, `sysState.mutex`, rather than a chain of nested locks. This matters because deadlock usually needs a circular wait between multiple held resources.
+
+The CAN path does not create that pattern. `CAN_RX_ISR` and `CAN_TX_ISR` do not take the mutex. Instead, they only post to the queue or semaphore using the ISR-safe FreeRTOS calls. `decodeTask` may use the shared state mutex while updating system state, but it does not wait on another lock at the same time. `CAN_TX_Task` waits for queue data and mailbox availability, but it does not hold `sysState.mutex` while doing so. Because of this, the design may experience short blocking, but not a true deadlock cycle.
+
+---
+
+## Audio Pipeline
+
+| Stage | Function |
+|---|---|
+| **Voice allocation** | Assigns notes across available voices and reuses voices when required |
+| **Oscillator section** | Generates the base sound using OSC1, OSC2, and the sub-oscillator |
+| **Additional sources** | Adds noise and ring modulation for more varied timbre |
+| **Modulation** | Applies ADSR envelope, LFO (pitch/filter targets), glide, and pitch bend |
+| **Filter stage** | State-variable filter with selectable type (LP/HP/BP/Notch), cutoff, and resonance |
+| **Nonlinear shaping** | Applies drive and wavefolding for stronger harmonic colouring |
+| **Effects** | Adds delay (time, feedback, mix) |
+| **Output** | Scales and writes the final audio signal to the output path |
+
+---
+
+## Controls and UI
+
+| Control Element | Purpose |
+|---|---|
+| **Keyboard matrix** | Used to enter notes directly on the board |
+| **Rotary knobs** | Adjust the currently selected parameter |
+| **Joystick** | Handles mode changes, page movement, parameter selection, and display view changes |
+| **OLED display** | Shows the performance screen, alternate views, and menu pages |
+| **Board connection logic** | Detects neighbouring boards and supports linked-board operation |
+
+### Interface Structure
+
+The user interface uses a multi-page menu rather than a single flat screen. A short joystick press switches between performance mode and menu mode. A long press cycles through the available display views. Left and right movement changes page, while up and down movement selects a parameter on the current page. The highlighted parameter is then edited using the rotary knob.
+
+### Display Modes
+
+- Performance view
+- Oscilloscope view
+- Envelope view
+
+### Parameter Pages
+
+- OSC page (Oscillator 1 wave morph, Oscillator 2 waveform, mix, detune)
+- OSC2 page (Sub-oscillator, noise, ring modulation, wavefolder)
+- FLT page (Filter cutoff, resonance, envelope depth, filter type)
+- ENV page (ADSR envelope: attack, decay, sustain, release)
+- MOD page (LFO rate/depth, glide time)
+- FX page (Delay time/feedback/mix, oscillator sync)
+
+---
+
+## Advanced Features
+
+| Feature | Description |
+|---|---|
+| **Dual primary oscillators** | OSC1 provides continuous waveform morphing, while OSC2 adds standard waveforms with detune, octave shift, and hard sync |
+| **Sub-oscillator and noise source** | A dedicated sub-oscillator reinforces the low end, and the noise source is available for more percussive or textured sounds |
+| **Ring modulation** | OSC1 and OSC2 can be combined through ring modulation to produce brighter and more inharmonic tones |
+| **Filter section** | Standard state-variable filter with LP, HP, BP, and notch responses, plus cutoff, resonance, and envelope depth controls |
+| **Drive and wavefolding** | The signal can be shaped further using pre-filter drive and digital wavefolding |
+| **Envelope and modulation control** | The synth includes ADSR envelope, LFO (rate/depth with pitch/filter targets), and glide/portamento |
+| **Integrated digital effects** | The output stage includes delay (time/feedback/mix) |
