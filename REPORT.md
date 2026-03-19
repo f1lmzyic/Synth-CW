@@ -46,15 +46,15 @@ This section outlines each task in terms of its theoretical minimum initiation i
 | `decodeTask` | **25.2 ms** | `msgInQ` length is 36. Under worst-case CAN traffic, the queue can fill in \(36 \times 0.7 = 25.2\) ms. |
 | `CAN_TX_Task` | **60 ms** | `scanKeysTask` runs every 20 ms and can generate up to 12 outgoing messages each cycle, so a 36-item `msgOutQ` can fill in 60 ms. |
 
-### 2.2 Measured Maximum Execution Time
+### 2.2 Worst Case Execution Time/CPU Utilization
 
 
-| Task / ISR | Measured maximum execution time |
-|---|---:|
-| `sampleISR` | ___ us |
-| `scanKeysTask` | ___ us |
-| `displayUpdateTask` | ___ us |
-| `CAN_RX_ISR` | ___ us |
-| `CAN_TX_ISR` | ___ us |
-| `decodeTask` | ___ us |
-| `CAN_TX_Task` | ___ us |
+| Task / ISR | WCET (us) | Minimum initiation interval | CPU utilisation (%) |
+|---|---:|---:|---:|
+| `sampleISR` | 22 | 45.45 us | 48.40 |
+| `scanKeysTask` | 282 | 20000 us | 1.41 |
+| `displayUpdateTask` | 16040 | 100000 us | 16.04 |
+| `CAN_RX_ISR` | 3 | 700 us | 0.43 |
+| `CAN_TX_ISR` | 1 | 700 us | 0.14 |
+| `decodeTask` | 11 | 36 exec / 25.2 ms | 1.57 |
+| `CAN_TX_Task` | 4 | 36 exec / 60 ms | 0.24 |
